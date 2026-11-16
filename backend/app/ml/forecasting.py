@@ -56,19 +56,27 @@ def _signals() -> set[str]:
 
 
 def _service_url() -> str:
-    return os.getenv("MAINTAIN_ML_SERVICE_URL", "https://maintain-ai-ml.onrender.com").rstrip("/")
+    # Native desktop mode has no implicit hosted ML dependency. A provider may
+    # be enabled only by explicitly configuring MAINTAIN_ML_SERVICE_URL.
+    return os.getenv("MAINTAIN_ML_SERVICE_URL", "").strip().rstrip("/")
 
 
 def _call_ml_service(values: list[float], horizon: int, model: str) -> dict:
     if model not in SUPPORTED_MODELS:
         raise RuntimeError(f"Unsupported forecast model: {model}")
+    service_url = _service_url()
+    if not service_url:
+        raise RuntimeError(
+            "Remote Chronos/Timer forecasting is not configured in this native edition. "
+            "Local statistical telemetry analysis and Random Forest risk inference remain available."
+        )
     model_id = "amazon/chronos-bolt-tiny" if model == "chronos-bolt-tiny" else "timer"
     body = json.dumps({"model": model_id, "values": values[-CONTEXT_SAMPLES:], "horizon": horizon}).encode("utf-8")
     headers = {"Content-Type": "application/json"}
     api_key = os.getenv("MAINTAIN_ML_API_KEY", "").strip()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    request = Request(f"{_service_url()}/v1/forecast", data=body, headers=headers, method="POST")
+    request = Request(f"{service_url}/v1/forecast", data=body, headers=headers, method="POST")
     try:
         with urlopen(request, timeout=float(os.getenv("ML_FORECAST_TIMEOUT_SECONDS", "90"))) as response:
             result = json.loads(response.read().decode("utf-8"))

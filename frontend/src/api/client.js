@@ -1,5 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_URL || ''
-const ML_BASE_URL = import.meta.env.VITE_ML_SERVICE_URL || 'https://maintain-ai-ml.onrender.com'
+const ML_BASE_URL = import.meta.env.VITE_ML_SERVICE_URL || ''
 const TOKEN_KEY = 'maintain-ai-token'
 export function getToken() { return localStorage.getItem(TOKEN_KEY) }
 export function setToken(token) { if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY) }
@@ -73,6 +73,15 @@ async function runRemoteChronosForecast(path, base, headers, signal) {
   const readingType = params.get('reading_type') || 'temperature'
   const horizon = Math.max(1, Math.min(64, Number(params.get('horizon') || 12)))
   const machineId = decodeURIComponent(match[1])
+  if (!ML_BASE_URL) {
+    return {
+      available: false,
+      model: model === 'timer' ? 'timer' : 'chronos2',
+      forecast: [],
+      horizon,
+      reason: 'Remote Chronos/Timer inference is disabled in this native edition. Local telemetry analysis and Random Forest risk inference remain available.',
+    }
+  }
   const readingsResponse = await fetch(`${base}/api/machines/${encodeURIComponent(machineId)}/readings?limit=200`, { headers, signal })
   if (!readingsResponse.ok) { const body = await readingsResponse.text(); throw new Error(readingsResponse.status + ' ' + readingsResponse.statusText + ': ' + body) }
   const readings = await readingsResponse.json()

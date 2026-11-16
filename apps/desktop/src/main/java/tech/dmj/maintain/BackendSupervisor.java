@@ -46,6 +46,9 @@ public final class BackendSupervisor implements AutoCloseable {
         env.put("SUPABASE_PUBLISHABLE_KEY", "");
         env.put("SUPABASE_SECRET_KEY", "");
         env.put("SUPABASE_JWT_SECRET", "");
+        env.put("ML_AUTO_FORECASTS", "false");
+        env.put("MAINTAIN_ML_SERVICE_URL", "");
+        env.put("MAINTAIN_PRETRAINED_FORECASTS", "false");
 
         process = builder.start();
         waitUntilReady(Duration.ofSeconds(60));

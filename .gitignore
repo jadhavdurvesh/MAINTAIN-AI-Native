@@ -1,11 +1,41 @@
-target/
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+
+# Java / Gradle
 .gradle/
 **/build/
 *.class
 *.log
+
+# Migrated React frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env*
+frontend/package-lock.backup
+
+# Migrated Python backend
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.db
+backend/*.sqlite*
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.env
+backend/build/
+backend/dist/
+
+# Native app runtime data
 /data/
 /logs/
 /backups/
 .env
 .idea/
 .vscode/
+*.iml
+.DS_Store
+Thumbs.db

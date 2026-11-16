@@ -1,47 +1,73 @@
 # MAINTAIN AI Native
 
-A native, local-first industrial maintenance platform built as an independent Windows and Linux desktop application. It uses Java 21+ / JavaFX for the desktop UI and a Rust engine for domain services, telemetry, local analytics, device integrations, and SQLite persistence.
+**The native desktop edition of MAINTAIN AI / YantraChikitsa.**
 
-Core workflows are designed to work offline. An optional online AI assistant can connect to a user-configured provider; no bundled local language model is planned. Local statistical anomaly detection is independent of that assistant. A Random Forest local inference adapter is planned once its model contract is defined.
+This edition migrates the existing application instead of rebuilding its features from scratch. It reuses the original React/Vite screens and FastAPI/SQLAlchemy business logic, hosted inside a JavaFX desktop application with a Rust native engine.
 
-## Current functional slice
+## What is already migrated
 
-- Native JavaFX shell with product navigation and the dark industrial visual identity.
-- Rust engine starts from the desktop and responds to a versioned local IPC ping.
-- Machine registry: create and list machines through local IPC and SQLite.
-- SQLite schema for machines, telemetry samples, and audit events.
-- Adaptive EWMA anomaly detector foundation.
+- Original React application shell, navigation, pages, components, profiles, and visual styles.
+- Original FastAPI routers and SQLAlchemy domain models.
+- Machine, maintenance, work-order, fault, alert, spare-part, device, sensor, telemetry, user, audit, analytics, and reporting endpoints.
+- Original AI assistant workflow, offline knowledge-base diagnostic engine, and optional Gemini provider.
+- Existing local ML modules, including adaptive telemetry/anomaly analysis and Random Forest risk model.
+- PDF/Excel report exporters and ESP32 example firmware.
 
-## Architecture
+The 131 selected source files are copies in this repository under `frontend/`, `backend/`, and `firmware/`. The original source repository has not been modified. Generated build output, package folders, Python bytecode, the original database, and large PyInstaller build output were not copied.
 
-```text
-JavaFX Desktop  <── local IPC ──> Rust Engine
-                                     ├── SQLite + local files
-                                     ├── Local analytics
-                                     └── Device adapters (Serial / MQTT / Modbus)
+## Native runtime
 
-Optional outbound HTTPS: configured AI provider only
-```
+- **JavaFX** owns the Windows/Linux desktop lifecycle and window.
+- **Original React UI** is built with Vite and displayed inside JavaFX WebView.
+- **FastAPI** runs as a local-only sidecar and reuses the original API routes.
+- **SQLite** is stored per user in the operating system's application-data directory.
+- **Rust** remains the native local engine for IPC, device integration, and system services.
+- A loopback-only server hosts the frontend and proxies `/api/*` requests to FastAPI.
+- Supabase is disabled in local mode. The single-user desktop uses the existing backend's local administrator context.
+- Core workflows do not require a cloud backend or cloud login.
 
-The IPC bootstrap is newline-framed JSON today; the versioned Protocol Buffers contract is in `proto/engine/v1/engine.proto` as the cross-language target. IPC stays local-machine only.
+## Intelligence and AI
 
-## Safety boundary
+Local capabilities reuse the original statistical/online telemetry logic and Random Forest model. No local language model is bundled.
 
-MAINTAIN AI Native is supervisory maintenance software, not a safety controller. Emergency stops, PLC safety logic, hardwired interlocks, and manufacturer-approved protection remain authoritative.
+The assistant uses the existing offline diagnostic engine by default. Gemini can be enabled by configuring an API key locally in Settings or through the backend's local environment. Provider requests are optional and outbound only.
+
+TimeRadar, Chronos, and Timer forecasting are not enabled by default in this native edition. The copied forecasting source remains available for reference, but automatic forecasting to the old hosted ML endpoint is disabled so telemetry is not sent to a third-party service silently.
+
+## Local data
+
+Windows: `%LOCALAPPDATA%\DMJ Group\MAINTAIN AI Native\`
+
+Linux: `$XDG_DATA_HOME/DMJ Group/MAINTAIN AI Native` or `~/.local/share/DMJ Group/MAINTAIN AI Native`
+
+The main database is `maintain-ai.sqlite3`; backend logs are under `logs/`.
 
 ## Development
 
-Prerequisites: Rust stable, JDK 21+, Gradle.
+Prerequisites: JDK 21+, Rust stable, Node.js 20+, npm, Python 3.
+
+From `apps/desktop`:
 
 ```bash
-cargo test --workspace
-cargo build --workspace
-cd apps/desktop
 gradle run
 ```
 
-The desktop launch task builds the Rust engine before starting JavaFX. CI compiles and tests the Rust workspace on Windows and Ubuntu, and compiles the desktop project on both platforms.
+Gradle builds the Rust engine and original React frontend, creates a Python virtual environment, installs `backend/requirements.txt`, starts the local FastAPI service, and opens the migrated UI in the JavaFX window.
 
-## Repository
+For backend-only development:
 
-This repository is independent of the hosted MAINTAIN AI web application. The existing web repository is not modified by native development.
+```bash
+cd backend
+python -m venv .venv
+# Activate the environment, then:
+pip install -r requirements.txt
+REQUIRE_AUTH=false DATABASE_URL=sqlite:///./maintain_ai.db python run_server.py
+```
+
+The heavyweight optional dependencies in `backend/requirements-ml.txt` are not installed by default.
+
+## Important boundary
+
+The local desktop bootstrap is a single-user loopback-only configuration. It is not a LAN host and must not be exposed to other computers. A future LAN mode needs separate authenticated users, TLS, role enforcement, and a reviewed network threat model.
+
+MAINTAIN AI Native is supervisory maintenance software, not a safety controller. Emergency stops, PLC safety logic, hardwired interlocks, and manufacturer-approved machinery protections remain authoritative.
