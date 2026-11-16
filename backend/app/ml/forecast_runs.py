@@ -1,0 +1,115 @@
+import json
+from datetime import datetime
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, inspect, text
+
+from ..database import Base, engine
+
+
+class MLForecastRun(Base):
+    """Durable forecast generated from a concrete telemetry snapshot."""
+
+    __tablename__ = "ml_forecast_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "machine_id",
+            "reading_type",
+            "model",
+            "horizon",
+            "input_last_reading_id",
+            "forecast_window",
+            name="uq_ml_forecast_input",
+        ),
+        Index("ix_ml_forecast_machine_signal_created", "machine_id", "reading_type", "created_at"),
+        Index("ix_ml_forecast_machine_created", "machine_id", "created_at"),
+        Index("ix_ml_forecast_machine_window_created", "machine_id", "forecast_window", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
+    machine_id = Column(Integer, ForeignKey("machines.id"), nullable=False, index=True)
+    reading_type = Column(String, nullable=False, index=True)
+    model = Column(String, nullable=False, default="chronos-bolt-tiny")
+    horizon = Column(Integer, nullable=False, default=12)
+    forecast_window = Column(String, nullable=True, index=True)
+    step_seconds = Column(Integer, nullable=True)
+
+    input_first_reading_id = Column(Integer, nullable=True)
+    input_last_reading_id = Column(Integer, nullable=False, index=True)
+    input_started_at = Column(DateTime, nullable=True)
+    input_ended_at = Column(DateTime, nullable=True)
+    input_reading_count = Column(Integer, nullable=False, default=0)
+
+    forecast_json = Column(Text, nullable=True)
+    next_prediction = Column(Float, nullable=True)
+    end_prediction = Column(Float, nullable=True)
+    trend = Column(String, nullable=True)
+
+    status = Column(String, nullable=False, default="running", index=True)
+    trigger = Column(String, nullable=False, default="automatic")
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+def serialize_run(run: MLForecastRun | None) -> dict | None:
+    """Return a JSON-safe representation shared by prediction status/history APIs."""
+    if run is None:
+        return None
+    forecast = None
+    if run.forecast_json:
+        try:
+            forecast = json.loads(run.forecast_json)
+        except (TypeError, ValueError):
+            forecast = None
+    return {
+        "id": run.id,
+        "organization_id": run.organization_id,
+        "machine_id": run.machine_id,
+        "reading_type": run.reading_type,
+        "model": run.model,
+        "horizon": run.horizon,
+        "forecast_window": run.forecast_window,
+        "step_seconds": run.step_seconds,
+        "input_first_reading_id": run.input_first_reading_id,
+        "input_last_reading_id": run.input_last_reading_id,
+        "input_started_at": run.input_started_at.isoformat() if run.input_started_at else None,
+        "input_ended_at": run.input_ended_at.isoformat() if run.input_ended_at else None,
+        "input_reading_count": run.input_reading_count,
+        "forecast": forecast,
+        "forecast_json": run.forecast_json,
+        "next_prediction": run.next_prediction,
+        "end_prediction": run.end_prediction,
+        "trend": run.trend,
+        "status": run.status,
+        "trigger": run.trigger,
+        "error_message": run.error_message,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+    }
+
+
+def ensure_forecast_schema() -> None:
+    """Upgrade the pre-window Postgres unique constraint without touching forecast rows."""
+    try:
+        inspector = inspect(engine)
+        if "ml_forecast_runs" not in inspector.get_table_names():
+            return
+        if engine.dialect.name != "postgresql":
+            return
+        constraints = inspector.get_unique_constraints("ml_forecast_runs")
+        existing = next((item for item in constraints if item.get("name") == "uq_ml_forecast_input"), None)
+        if existing and "forecast_window" in (existing.get("column_names") or []):
+            return
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ml_forecast_runs DROP CONSTRAINT IF EXISTS uq_ml_forecast_input"))
+            connection.execute(text(
+                "ALTER TABLE ml_forecast_runs ADD CONSTRAINT uq_ml_forecast_input "
+                "UNIQUE (machine_id, reading_type, model, horizon, input_last_reading_id, forecast_window)"
+            ))
+    except Exception:
+        # Startup remains compatible with local SQLite/demo databases.
+        return
+
+
+ensure_forecast_schema()
