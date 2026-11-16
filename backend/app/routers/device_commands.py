@@ -192,6 +192,7 @@ def latest_telemetry(current: CurrentUser = Depends(get_current_user), db: Sessi
                 "value": reading.value,
                 "unit": reading.unit,
                 "recorded_at": reading.recorded_at,
+                "source": reading.source,
             }
     return {"machines": list(latest.values())}
 
