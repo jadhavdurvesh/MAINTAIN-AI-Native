@@ -12,8 +12,11 @@ import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
@@ -42,6 +45,12 @@ public final class NativeWorkspaceView extends BorderPane {
     private final FilteredList<EngineIpcClient.MachineDto> visibleMachines =
             new FilteredList<>(machines, machine -> true);
     private final TableView<EngineIpcClient.MachineDto> table = new TableView<>();
+    private final ComboBox<EngineIpcClient.MachineDto> telemetryMachine = new ComboBox<>();
+    private final TableView<EngineIpcClient.TelemetryDto> telemetryTable = new TableView<>();
+    private final TextField telemetryMetric = new TextField();
+    private final TextField telemetryValue = new TextField();
+    private final TextField telemetryUnit = new TextField();
+    private final Label telemetryStatus = new Label("Select a machine to view telemetry.");
     private final TextField search = new TextField();
     private final Label status = new Label("Connecting to local Rust engine…");
     private final Label totalAssets = new Label("—");
@@ -159,9 +168,160 @@ public final class NativeWorkspaceView extends BorderPane {
         table.setPrefHeight(490);
 
         registry.getChildren().addAll(toolbar, table);
-        content.getChildren().addAll(heading, metrics, registry);
-        VBox.setVgrow(registry, Priority.ALWAYS);
+        TabPane workspaceTabs = new TabPane();
+        Tab machinesTab = new Tab("Machine registry", registry);
+        machinesTab.setClosable(false);
+        Tab telemetryTab = new Tab("Telemetry", buildTelemetryPanel());
+        telemetryTab.setClosable(false);
+        workspaceTabs.getTabs().addAll(machinesTab, telemetryTab);
+        workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        workspaceTabs.setStyle("-fx-background-color:" + PANEL + ";");
+        content.getChildren().addAll(heading, metrics, workspaceTabs);
+        VBox.setVgrow(workspaceTabs, Priority.ALWAYS);
         return content;
+    }
+
+
+    private Node buildTelemetryPanel() {
+        VBox panel = new VBox(16);
+        panel.setPadding(new Insets(20));
+        panel.setStyle("-fx-background-color:" + PANEL + ";-fx-background-radius:14;"
+                + "-fx-border-color:#293444;-fx-border-radius:14;");
+
+        VBox heading = new VBox(5);
+        Label title = new Label("Telemetry history");
+        title.setStyle("-fx-text-fill:" + TEXT + ";-fx-font-size:17px;-fx-font-weight:bold;");
+        Label hint = new Label("Readings are stored locally by the Rust engine. Hardware ingestion will use the same write path.");
+        hint.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
+        heading.getChildren().addAll(title, hint);
+
+        HBox controls = new HBox(10);
+        controls.setAlignment(Pos.CENTER_LEFT);
+        telemetryMachine.setPromptText("Select machine");
+        telemetryMachine.setPrefWidth(230);
+        telemetryMachine.setStyle("-fx-background-color:#101720;-fx-text-fill:" + TEXT + ";");
+        telemetryMachine.setConverter(new javafx.util.StringConverter<>() {
+            @Override public String toString(EngineIpcClient.MachineDto machine) {
+                return machine == null ? "" : machine.name() + "  ·  " + machine.assetTag();
+            }
+            @Override public EngineIpcClient.MachineDto fromString(String value) { return null; }
+        });
+        telemetryMachine.setOnAction(event -> refreshTelemetry());
+
+        telemetryMetric.setPromptText("Signal (e.g. temperature)");
+        telemetryMetric.setPrefWidth(210);
+        telemetryValue.setPromptText("Value");
+        telemetryValue.setPrefWidth(100);
+        telemetryUnit.setPromptText("Unit (°C)");
+        telemetryUnit.setPrefWidth(95);
+
+        Button record = new Button("+  Record reading");
+        record.setStyle(buttonStyle(true));
+        record.setOnAction(event -> recordTelemetry());
+
+        Button reload = new Button("Refresh");
+        reload.setStyle(buttonStyle(false));
+        reload.setOnAction(event -> refreshTelemetry());
+
+        controls.getChildren().addAll(
+                telemetryMachine, telemetryMetric, telemetryValue, telemetryUnit, record, reload
+        );
+
+        telemetryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        telemetryTable.setStyle("-fx-background-color:#111923;-fx-control-inner-background:#111923;"
+                + "-fx-table-cell-border-color:#263241;-fx-text-background-color:" + TEXT
+                + ";-fx-selection-bar:#1a4846;-fx-selection-bar-non-focused:#263b43;");
+        telemetryTable.getColumns().setAll(
+                telemetryColumn("RECORDED AT", 1.5, record -> record.observedAt()),
+                telemetryColumn("SIGNAL", 1.1, record -> record.metric()),
+                telemetryColumn("VALUE", 0.8, record -> String.format(java.util.Locale.ROOT, "%.4f", record.value())),
+                telemetryColumn("UNIT", 0.55, record -> record.unit()),
+                telemetryColumn("SOURCE", 0.7, record -> record.source())
+        );
+        telemetryTable.setPlaceholder(new Label("No readings for this machine yet."));
+        telemetryTable.setPrefHeight(430);
+
+        telemetryStatus.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
+        panel.getChildren().addAll(heading, controls, telemetryTable, telemetryStatus);
+        VBox.setVgrow(telemetryTable, Priority.ALWAYS);
+        return panel;
+    }
+
+    private TableColumn<EngineIpcClient.TelemetryDto, String> telemetryColumn(
+            String title,
+            double widthWeight,
+            Function<EngineIpcClient.TelemetryDto, String> value
+    ) {
+        TableColumn<EngineIpcClient.TelemetryDto, String> column = new TableColumn<>(title);
+        column.setMinWidth(90 * widthWeight);
+        column.setCellValueFactory(cell ->
+                new ReadOnlyStringWrapper(safe(value.apply(cell.getValue()))));
+        column.setStyle("-fx-text-fill:#aebac9;-fx-font-size:10px;");
+        return column;
+    }
+
+    private void refreshTelemetry() {
+        EngineIpcClient.MachineDto selected = telemetryMachine.getValue();
+        if (selected == null) {
+            telemetryTable.getItems().clear();
+            telemetryStatus.setText("Register or select a machine before adding telemetry.");
+            return;
+        }
+        telemetryStatus.setText("Loading local telemetry history…");
+        Thread.ofVirtual().start(() -> {
+            try {
+                var records = engine.listTelemetry(selected.id(), null, 100);
+                Platform.runLater(() -> {
+                    telemetryTable.getItems().setAll(records);
+                    telemetryStatus.setText("Showing " + records.size()
+                            + " newest reading(s) for " + selected.name() + ".");
+                });
+            } catch (IOException error) {
+                Platform.runLater(() ->
+                        telemetryStatus.setText("Telemetry history failed: " + safe(error.getMessage())));
+            }
+        });
+    }
+
+    private void recordTelemetry() {
+        EngineIpcClient.MachineDto selected = telemetryMachine.getValue();
+        if (selected == null) {
+            telemetryStatus.setText("Select a machine before recording a reading.");
+            return;
+        }
+        String metric = telemetryMetric.getText() == null ? "" : telemetryMetric.getText().trim();
+        String rawValue = telemetryValue.getText() == null ? "" : telemetryValue.getText().trim();
+        String unit = telemetryUnit.getText() == null ? "" : telemetryUnit.getText().trim();
+        if (metric.isBlank() || rawValue.isBlank()) {
+            telemetryStatus.setText("Signal name and numeric value are required.");
+            return;
+        }
+
+        final double value;
+        try {
+            value = Double.parseDouble(rawValue);
+            if (!Double.isFinite(value)) throw new NumberFormatException("Value must be finite.");
+        } catch (NumberFormatException error) {
+            telemetryStatus.setText("Enter a valid finite numeric reading.");
+            return;
+        }
+
+        telemetryStatus.setText("Writing telemetry to the Rust engine…");
+        Thread.ofVirtual().start(() -> {
+            try {
+                engine.recordTelemetry(selected.id(), metric, value, unit, "manual", null);
+                var records = engine.listTelemetry(selected.id(), null, 100);
+                Platform.runLater(() -> {
+                    telemetryTable.getItems().setAll(records);
+                    telemetryValue.clear();
+                    telemetryStatus.setText("Reading saved in native SQLite · " + metric + " = "
+                            + value + (unit.isBlank() ? "" : " " + unit));
+                });
+            } catch (IOException error) {
+                Platform.runLater(() ->
+                        telemetryStatus.setText("Could not record reading: " + safe(error.getMessage())));
+            }
+        });
     }
 
     private Node metricCard(String title, Label value, String detail) {
@@ -234,8 +394,19 @@ public final class NativeWorkspaceView extends BorderPane {
                 var result = engine.listMachines();
                 Platform.runLater(() -> {
                     machines.setAll(result);
+                    EngineIpcClient.MachineDto previous = telemetryMachine.getValue();
+                    telemetryMachine.getItems().setAll(result);
+                    if (previous != null) {
+                        telemetryMachine.getItems().stream()
+                                .filter(machine -> machine.id().equals(previous.id()))
+                                .findFirst().ifPresent(telemetryMachine::setValue);
+                    }
+                    if (telemetryMachine.getValue() == null && !result.isEmpty()) {
+                        telemetryMachine.setValue(result.get(0));
+                    }
                     updateMetrics();
                     status.setText("Connected · " + result.size() + " native machine record(s)");
+                    refreshTelemetry();
                 });
             } catch (IOException error) {
                 Platform.runLater(() -> status.setText("Registry read failed: " + safe(error.getMessage())));
