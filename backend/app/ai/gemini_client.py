@@ -1,0 +1,137 @@
+"""Online Gemini diagnostic/report layer for MAINTAIN AI.
+
+Uses Google's current google-genai SDK. The older google-generativeai package is
+legacy; keeping the client here server-side means organization-scoped keys never
+reach the browser.
+"""
+import json
+import os
+from typing import List, Optional
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+
+def _resolve_api_key(db=None, organization_id=None) -> Optional[str]:
+    if db is not None:
+        from .. import settings_store
+        stored = settings_store.get_setting(db, "gemini_api_key", organization_id)
+        if stored:
+            return stored
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+
+
+SYSTEM_INSTRUCTION = """You are the diagnostic assistant inside MAINTAIN AI, an industrial predictive-maintenance system.
+Respond ONLY with strict JSON matching this shape:
+{
+  "safety_notice": "<one sentence safety reminder appropriate to the problem>",
+  "needs_more_info": <true|false>,
+  "clarifying_questions": ["<question>", ...],
+  "possible_causes": [
+    {"cause": "<short cause name>", "confidence": <0-100 integer>, "certainty": "<confirmed|likely|possible|insufficient_information>"}
+  ],
+  "recommended_procedure": ["<step 1>", "<step 2>", ...]
+}
+
+Diagnostic rules:
+- Treat the supplied machine context as live evidence, not decoration.
+- Use the supplied sensor_summary, recent faults, alerts, maintenance history, health score and operating hours when relevant.
+- Treat prior conversation history as part of the same diagnostic session. Remember what was reported, what you asked, what the technician answered, what you previously concluded, and what was actually found.
+- NEVER ask the technician for a value that is already present in sensor_summary or a fact already answered in the conversation history.
+- Questions must be specific to the current problem, selected machine, observed evidence, and leading differential causes. Do not use a fixed questionnaire.
+- Ask only the minimum number of high-value questions needed to distinguish between plausible causes. Usually ask 1-3 questions at a time.
+- If the telemetry, conversation history and technician answers are sufficient, stop asking questions and provide a ranked diagnosis and procedure.
+- Do not repeat a question already asked, even if it appeared in an earlier turn.
+- A sensor trend is not available unless the context contains enough readings to support it. Do not invent trends.
+- Never state a cause as confirmed unless the technician's words or supplied machine evidence actually confirms it.
+- If there is insufficient information, set needs_more_info true and leave possible_causes and recommended_procedure empty rather than guessing.
+- Always start a physical-inspection procedure with an isolation/lockout safety step when appropriate.
+- Keep recommendations concrete and specific to industrial machinery.
+"""
+
+
+def test_connection(db=None, organization_id=None):
+    """Verify the configured AI key can reach the configured Gemini model."""
+    api_key = _resolve_api_key(db, organization_id)
+    if not api_key:
+        return {"ok": False, "configured": False, "message": "No AI API key is configured for this organization."}
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return {"ok": False, "configured": True, "message": "AI provider SDK is not installed on the backend."}
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents="Reply with the single word OK.",
+            config=types.GenerateContentConfig(response_mime_type="text/plain"),
+        )
+        if not getattr(response, "text", None):
+            return {"ok": False, "configured": True, "message": "AI provider returned an empty response."}
+        return {"ok": True, "configured": True, "model": GEMINI_MODEL, "message": "AI connection verified."}
+    except Exception as exc:
+        error_text = str(exc).lower()
+        if "api key" in error_text or "permission" in error_text or "unauthenticated" in error_text or "401" in error_text or "403" in error_text:
+            message = "The saved AI API key was rejected or does not have access to the selected model."
+        elif "429" in error_text or "quota" in error_text or "rate" in error_text:
+            message = "The AI API quota or rate limit was reached."
+        elif "404" in error_text or "not found" in error_text:
+            message = "The configured AI model is unavailable for this API key."
+        else:
+            message = "The AI provider could not be reached or returned an error."
+        return {"ok": False, "configured": True, "message": message}
+
+
+def diagnose_with_gemini(
+    problem_description: str,
+    machine_context: Optional[dict] = None,
+    answers: Optional[List[str]] = None,
+    conversation_history: Optional[List[dict]] = None,
+    db=None,
+    organization_id=None,
+) -> Optional[dict]:
+    api_key = _resolve_api_key(db, organization_id)
+    if not api_key:
+        return None
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        return None
+
+    context_lines = []
+    if machine_context:
+        context_lines.append("Selected machine evidence:\\n" + json.dumps(machine_context, default=str, indent=2))
+    if conversation_history:
+        context_lines.append("Persistent diagnostic conversation history (oldest to newest):\\n" + json.dumps(conversation_history, default=str, indent=2))
+    if answers:
+        context_lines.append("Technician answers supplied with this request:\\n" + "\\n".join(f"- {a}" for a in answers))
+
+    prompt = (
+        f"Current problem reported by technician:\\n{problem_description}\\n\\n"
+        + "\\n\\n".join(context_lines)
+        + "\\n\\nUse the evidence and persistent conversation history above to continue this diagnostic session."
+    )
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+            ),
+        )
+        text = getattr(response, "text", None)
+        if not text:
+            return None
+        data = json.loads(text)
+        data["source"] = "gemini"
+        data["model"] = GEMINI_MODEL
+        return data
+    except Exception:
+        # Callers intentionally fall back to evidence-only output. Do not leak
+        # provider credentials or raw provider errors into the client response.
+        return None
