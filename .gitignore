@@ -39,3 +39,20 @@ backend/dist/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Research datasets and generated model artefacts (keep raw data/weights out of Git)
+/training-data/
+/prepared/
+/sequences/
+/artifacts/
+/training-data-*/
+/training/outputs/
+/training/checkpoints/
+/training/splits/
+/training/prepared/
+**/.ipynb_checkpoints/
+**/*.parquet
+**/*.pt
+**/*.pth
+**/*.ckpt
+**/*.safetensors
