@@ -96,6 +96,92 @@ fn handle_request(request: EngineRequest, database: &Path) -> EngineResponse {
                 }
             }
         }
+
+        EngineRequest::RecordTelemetry {
+            machine_id,
+            metric,
+            value,
+            unit,
+            source,
+            observed_at,
+        } => {
+            let metric = metric.trim().to_string();
+            let unit = unit.trim().to_string();
+            let source = source.trim().to_ascii_lowercase();
+            if metric.is_empty() || metric.len() > 80 {
+                return EngineResponse::Error {
+                    code: "validation_error".into(),
+                    message: "Metric name is required and must be at most 80 characters.".into(),
+                };
+            }
+            if unit.len() > 24 {
+                return EngineResponse::Error {
+                    code: "validation_error".into(),
+                    message: "Unit must be at most 24 characters.".into(),
+                };
+            }
+            if !value.is_finite() {
+                return EngineResponse::Error {
+                    code: "validation_error".into(),
+                    message: "Telemetry value must be a finite number.".into(),
+                };
+            }
+            if !["manual", "sensor", "import"].contains(&source.as_str()) {
+                return EngineResponse::Error {
+                    code: "validation_error".into(),
+                    message: "Telemetry source must be manual, sensor, or import.".into(),
+                };
+            }
+
+            let result = maintain_persistence::open_database(database).and_then(|connection| {
+                maintain_persistence::record_telemetry(
+                    &connection,
+                    &machine_id,
+                    &metric,
+                    value,
+                    &unit,
+                    &source,
+                    observed_at.as_deref(),
+                )
+            });
+            match result {
+                Ok(record) => EngineResponse::TelemetryRecorded { record },
+                Err(error) => EngineResponse::Error {
+                    code: "telemetry_record_failed".into(),
+                    message: error.to_string(),
+                },
+            }
+        }
+        EngineRequest::ListTelemetry {
+            machine_id,
+            metric,
+            limit,
+        } => {
+            let metric = metric
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            if metric.as_ref().is_some_and(|value| value.len() > 80) {
+                return EngineResponse::Error {
+                    code: "validation_error".into(),
+                    message: "Metric filter must be at most 80 characters.".into(),
+                };
+            }
+            let result = maintain_persistence::open_database(database).and_then(|connection| {
+                maintain_persistence::list_telemetry(
+                    &connection,
+                    &machine_id,
+                    metric.as_deref(),
+                    limit,
+                )
+            });
+            match result {
+                Ok(records) => EngineResponse::TelemetryListed { records },
+                Err(error) => EngineResponse::Error {
+                    code: "telemetry_list_failed".into(),
+                    message: error.to_string(),
+                },
+            }
+        }
     }
 }
 
