@@ -1,0 +1,312 @@
+from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, EmailStr
+
+
+class ComponentIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+
+class ComponentOut(ComponentIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+
+
+class MachineIn(BaseModel):
+    machine_code: str
+    name: str
+    category: Optional[str] = None
+    manufacturer: Optional[str] = None
+    model_number: Optional[str] = None
+    installation_date: Optional[datetime] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    operating_hours: float = 0
+    criticality: str = "medium"
+    maintenance_interval_hours: float = 500
+
+
+class MachineUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    location: Optional[str] = None
+    department: Optional[str] = None
+    operating_hours: Optional[float] = None
+    criticality: Optional[str] = None
+    maintenance_interval_hours: Optional[float] = None
+    health_score: Optional[int] = None
+    status: Optional[str] = None
+
+
+class MachinePerformanceProfileIn(BaseModel):
+    started_on: Optional[datetime] = None
+    rated_capacity: Optional[float] = None
+    capacity_unit: Optional[str] = None
+    oee_target: Optional[float] = None
+
+class MachinePerformanceProfileOut(MachinePerformanceProfileIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    machine_id: int
+
+class MachinePerformanceMonthIn(BaseModel):
+    month: str
+    planned_hours: Optional[float] = None
+    manual_runtime_hours: Optional[float] = None
+    total_units: Optional[int] = None
+    good_units: Optional[int] = None
+    rejected_units: Optional[int] = None
+    ideal_cycle_seconds: Optional[float] = None
+    manual_current_working_hours: Optional[float] = None
+    manual_mtbf_hours: Optional[float] = None
+    manual_mttr_minutes: Optional[float] = None
+    manual_availability_percent: Optional[float] = None
+    manual_performance_percent: Optional[float] = None
+    manual_quality_percent: Optional[float] = None
+    manual_oee_percent: Optional[float] = None
+
+class MachinePerformanceMonthOut(MachinePerformanceMonthIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    machine_id: int
+
+class MachineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_code: str
+    name: str
+    category: Optional[str]
+    manufacturer: Optional[str]
+    model_number: Optional[str]
+    location: Optional[str]
+    department: Optional[str]
+    operating_hours: float
+    criticality: str
+    health_score: int
+    status: str
+    maintenance_interval_hours: float
+    last_maintenance_date: Optional[datetime]
+    next_maintenance_date: Optional[datetime]
+    archived: bool = False
+
+
+class SensorReadingIn(BaseModel):
+    reading_type: str
+    value: float
+    unit: Optional[str] = None
+    source: str = "manual"
+
+
+class SensorReadingOut(SensorReadingIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_id: int
+    recorded_at: datetime
+
+
+class MaintenanceRecordIn(BaseModel):
+    type: str
+    description: Optional[str] = None
+    scheduled_date: Optional[datetime] = None
+    performed_by: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class MaintenanceRecordOut(MaintenanceRecordIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_id: int
+    status: str
+    completed_date: Optional[datetime]
+
+
+class FaultRecordIn(BaseModel):
+    machine_id: int
+    description: str
+    symptoms: Optional[str] = None
+    cause: Optional[str] = None
+    resolution: Optional[str] = None
+    severity: str = "warning"
+
+
+class FaultRecordOut(FaultRecordIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    reported_date: datetime
+    resolved_date: Optional[datetime]
+
+
+class FaultResolveIn(BaseModel):
+    cause: Optional[str] = None
+    resolution: str
+
+
+class WorkOrderIn(BaseModel):
+    machine_id: int
+    fault_id: Optional[int] = None
+    problem: str
+    priority: str = "medium"
+    recommended_actions: Optional[str] = None
+    assigned_to: Optional[str] = None
+
+
+class WorkOrderOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_id: int
+    fault_id: Optional[int]
+    problem: str
+    priority: str
+    status: str
+    recommended_actions: Optional[str]
+    assigned_to: Optional[str]
+    created_at: datetime
+    completed_at: Optional[datetime]
+    resolution_notes: Optional[str]
+
+
+class WorkOrderUpdate(BaseModel):
+    status: Optional[str] = None
+    assigned_to: Optional[str] = None
+    resolution_notes: Optional[str] = None
+
+
+class AlertOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    machine_id: int
+    alert_type: str
+    severity: str
+    message: str
+    created_at: datetime
+    acknowledged: bool
+    resolved: bool
+
+
+class SparePartIn(BaseModel):
+    name: str
+    part_number: str
+    quantity: int = 0
+    minimum_stock: int = 1
+    compatible_machine_categories: Optional[str] = None
+
+
+class SparePartOut(SparePartIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    last_used_date: Optional[datetime]
+
+
+class DiagnoseRequest(BaseModel):
+    machine_id: Optional[int] = None
+    problem_description: str
+    answers: Optional[List[str]] = None
+    use_online_ai: bool = False
+    conversation_id: Optional[str] = None
+    user_message: Optional[str] = None
+
+
+class PossibleCause(BaseModel):
+    cause: str
+    confidence: int
+    certainty: str
+
+
+class DiagnoseResponse(BaseModel):
+    session_id: Optional[int] = None
+    conversation_id: Optional[str] = None
+    safety_notice: str
+    clarifying_questions: List[str] = []
+    possible_causes: List[PossibleCause] = []
+    recommended_procedure: List[str] = []
+    source: str
+    needs_more_info: bool = False
+
+
+class DashboardSummary(BaseModel):
+    total_machines: int
+    healthy: int
+    attention: int
+    critical: int
+    open_work_orders: int
+    upcoming_maintenance: int
+    active_alerts: int
+
+
+class WorkerProfileOut(BaseModel):
+    user_id: int
+    username: str
+    full_name: Optional[str] = None
+    role: str
+    organization_id: int
+    organization_name: Optional[str] = None
+    active: bool
+
+
+class MachineAssignmentOut(BaseModel):
+    user_id: int
+    username: str
+    machine_id: int
+    machine_name: str
+    assigned: bool = True
+
+class MachineDetailOut(BaseModel):
+    machine: MachineOut
+    components: List[ComponentOut]
+    readings: List[SensorReadingOut]
+    maintenance: List[MaintenanceRecordOut]
+    device_status: dict
+
+
+class MLOutcomeFeedbackIn(BaseModel):
+    machine_id: int
+    fault_id: Optional[int] = None
+    work_order_id: Optional[int] = None
+    outcome_type: str
+    confirmed_root_cause: Optional[str] = None
+    failed_component: Optional[str] = None
+    corrective_action: Optional[str] = None
+    downtime_minutes: Optional[float] = None
+    false_alarm: bool = False
+    notes: Optional[str] = None
+
+
+class MLOutcomeFeedbackOut(MLOutcomeFeedbackIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_by: Optional[str]
+    created_at: datetime
+
+
+class OrganizationInvitationIn(BaseModel):
+    email: EmailStr
+    role: str = "technician"
+    application: str = "workforce"
+
+
+class OrganizationInvitationOut(BaseModel):
+    id: int
+    email: str
+    role: str
+    application: str
+    status: str
+    created_at: datetime
+
+
+class OrganizationMemberOut(BaseModel):
+    user_id: int
+    username: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    role: str
+    applications: List[str]
