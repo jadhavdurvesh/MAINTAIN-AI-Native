@@ -23,8 +23,6 @@ def npmLauncher = windowsHost ? ['cmd', '/c', 'npm'] : ['npm']
 def pythonLauncher = System.getenv('PYTHON') ?: (windowsHost ? 'python' : 'python3')
 def venvPython = new File(backendDir, windowsHost ? '.venv/Scripts/python.exe' : '.venv/bin/python')
 def backendStamp = new File(backendDir, '.venv/.maintain-requirements.sha256')
-sourceSets { main { resources.srcDir(layout.buildDirectory.dir('generated-resources')) } }
-
 tasks.register('installFrontendDependencies', Exec) {
     workingDir frontendDir
     commandLine(*(npmLauncher + ['ci', '--no-audit', '--no-fund']))
@@ -43,10 +41,8 @@ tasks.register('buildFrontend', Exec) {
 tasks.register('syncFrontendResources', Copy) {
     dependsOn 'buildFrontend'
     from new File(frontendDir, 'dist')
-    into layout.buildDirectory.dir('generated-resources/web')
+    into layout.buildDirectory.dir('compatibility-resources/web')
 }
-tasks.named('processResources') { dependsOn 'syncFrontendResources' }
-
 tasks.register('buildRustEngine', Exec) {
     workingDir repoRoot
     commandLine 'cargo', 'build', '--package', 'maintain-engine'
@@ -74,6 +70,18 @@ tasks.register('setupLocalBackend') {
         }
     }
 }
+// The normal desktop path is JavaFX + Rust only. It does not build React or install Python.
 tasks.named('run') {
-    dependsOn 'buildRustEngine', 'setupLocalBackend', 'processResources'
+    dependsOn 'buildRustEngine'
+}
+
+// Optional bridge to the not-yet-migrated screens. Its resources and Python sidecar
+// are prepared only when explicitly requested.
+tasks.register('runCompatibility', JavaExec) {
+    group = 'application'
+    description = 'Run the JavaFX app with the temporary React/FastAPI compatibility workspace.'
+    dependsOn 'buildRustEngine', 'setupLocalBackend', 'syncFrontendResources'
+    classpath = sourceSets.main.runtimeClasspath + files(layout.buildDirectory.dir('compatibility-resources'))
+    mainClass.set(application.mainClass)
+    jvmArgs(application.applicationDefaultJvmArgs)
 }
