@@ -22,6 +22,6 @@ The native application does not carry the old Electron package forward. Its desk
 
 ## Packaging status
 
-The current Gradle workflow builds the Rust engine, builds the React assets, provisions a local Python environment, and compiles/starts the JavaFX application. It does **not yet** produce a self-contained Windows installer equivalent to the former Electron/PyInstaller distribution.
+The default Gradle run builds the Rust engine and JavaFX host only. It does not build React, install Python dependencies or start FastAPI. The optional runCompatibility task prepares the React bundle and Python environment; FastAPI and the compatibility WebView start only when that window is opened. The optional task exists to preserve access to unported workflows during the transition. The native build does **not yet** produce a self-contained Windows installer equivalent to the former Electron/PyInstaller distribution.
 
 Before declaring installer parity, the packaging pipeline must bundle a supported Java runtime, JavaFX modules, the Rust executable, the Python runtime and backend dependencies, frontend assets, and the correct Windows installer/signing resources. It must also verify clean-machine startup without requiring globally installed Node.js or Python. Until that work is completed, run the source development workflow documented in the root README.
