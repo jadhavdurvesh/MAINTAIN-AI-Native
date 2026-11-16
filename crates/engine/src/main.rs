@@ -1,9 +1,7 @@
 use anyhow::{Context,Result};
 use maintain_protocol::{EngineRequest,EngineResponse,IpcEnvelope,PROTOCOL_VERSION};
 use std::path::PathBuf;
-use tokio::io::{AsyncWriteExt,BufReader};
-#[cfg(windows)]
-use tokio::io::AsyncBufReadExt;
+use tokio::io::{AsyncBufReadExt,AsyncWriteExt,BufReader};
 use tracing::{error,info};
 #[tokio::main]async fn main()->Result<()>{tracing_subscriber::fmt().with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_|"info".into())).init();let data=data_dir()?;std::fs::create_dir_all(&data)?;let db=data.join("maintain-native.sqlite3");maintain_persistence::open_database(&db).with_context(||format!("failed to initialize {}",db.display()))?;#[cfg(unix)]run_unix(data.join("engine.sock")).await?;#[cfg(windows)]run_windows().await?;Ok(())}
 fn data_dir()->Result<PathBuf>{if let Some(p)=std::env::var_os("MAINTAIN_DATA_DIR"){return Ok(PathBuf::from(p));}Ok(dirs::data_local_dir().context("cannot locate local data directory")?.join("DMJ Group").join("MAINTAIN AI Native"))}
