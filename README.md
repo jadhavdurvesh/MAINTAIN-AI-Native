@@ -97,6 +97,6 @@ REQUIRE_AUTH=false DATABASE_URL=sqlite:///./maintain_ai.db python run_server.py
 - Remaining business workflows are still in the compatibility stack and must be migrated one module at a time.
 - The native Rust engine is not yet the source of truth for every business workflow.
 
-See Electron to JavaFX migration status (docs/ELECTRON_TO_JAVAFX_MIGRATION.md) and the migration architecture documentation.
+See [Electron to JavaFX migration status](docs/ELECTRON_TO_JAVAFX_MIGRATION.md) and the [native migration roadmap](docs/ROADMAP.md).
 
 MAINTAIN AI is supervisory maintenance software, not a safety controller. Emergency stops, PLC safety logic, hardwired interlocks and manufacturer-approved machinery protections remain authoritative.
