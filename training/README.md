@@ -24,10 +24,12 @@ stay outside Git.
 4. **NASA C-MAPSS / N-CMAPSS** — multivariate run-to-failure engine trajectories.
    Use as generic temporal-prognostics pretraining/RUL validation. Do **not**
    label this as pump, compressor, motor or conveyor data.
-5. **Pump dataset** — the Crompton Greaves CG-IPM-15 dataset can be used as
-   pump-specific supplemental data when its source/license is verified before
-   commercial use. It is synthetic, so it is not treated as equivalent to
-   real industrial pump telemetry.
+5. **Pump dataset (planned)** — the Crompton Greaves CG-IPM-15 dataset may be
+   evaluated as pump-specific supplemental data when its source/license is
+   verified before commercial use. It is synthetic, so it is not equivalent to
+   real industrial pump telemetry. No CG-IPM-15 adapter is currently included;
+   it is disabled in the starter training config until the parser and validation
+   path are implemented.
 
 ## What the first model learns
 
