@@ -48,7 +48,8 @@ public final class LocalFrontendServer implements AutoCloseable {
         }
         if (input == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
         byte[] body;
-        try (input) { body = input.readAllBytes(); }
+        InputStream selectedInput = input;
+        try (selectedInput) { body = selectedInput.readAllBytes(); }
         exchange.getResponseHeaders().set("Content-Type", contentType(relative));
         exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
         exchange.getResponseHeaders().set("Cache-Control", relative.equals("index.html") ? "no-store" : "public, max-age=31536000, immutable");
