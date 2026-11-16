@@ -32,6 +32,8 @@ public final class App extends Application {
     private Stage primaryStage;
     private Stage compatibilityStage;
     private volatile boolean compatibilityStarting;
+    private volatile boolean compatibilityReady;
+    private volatile String compatibilityApiUrl;
 
     @Override
     public void start(Stage stage) {
@@ -75,10 +77,11 @@ public final class App extends Application {
     }
 
     private void showNativeWorkspace(String engineName) {
+        boolean compatibilityAssetsPresent = App.class.getResource("/web/index.html") != null;
         NativeWorkspaceView workspace = new NativeWorkspaceView(
                 engineName,
                 engineClient,
-                this::openCompatibilityWorkspace
+                compatibilityAssetsPresent ? this::openCompatibilityWorkspace : null
         );
         root.getChildren().setAll(workspace);
         primaryStage.setTitle("MAINTAIN AI · Native Workspace");
@@ -95,6 +98,10 @@ public final class App extends Application {
             return;
         }
         if (compatibilityStarting) return;
+        if (compatibilityReady) {
+            showCompatibilityWindow(compatibilityApiUrl);
+            return;
+        }
         compatibilityStarting = true;
 
         Thread.ofVirtual().start(() -> {
@@ -102,8 +109,12 @@ public final class App extends Application {
                 String api = backend.startAndWait();
                 frontend.start();
                 frontend.setBackendTarget(api);
+                compatibilityApiUrl = api;
+                compatibilityReady = true;
                 Platform.runLater(() -> showCompatibilityWindow(api));
             } catch (Exception error) {
+                frontend.close();
+                backend.close();
                 Platform.runLater(() -> {
                     compatibilityStarting = false;
                     Alert alert = new Alert(Alert.AlertType.ERROR);
