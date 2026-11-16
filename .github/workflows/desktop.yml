@@ -30,9 +30,14 @@ jobs:
         with:
           gradle-version: '8.10.2'
           cache-provider: basic
-      - name: Build Rust engine, install local backend, build React app, and compile JavaFX
+      - name: Build the default native JavaFX and Rust workspace
         working-directory: apps/desktop
-        run: gradle buildRustEngine setupLocalBackend processResources compileJava
+        run: gradle buildRustEngine compileJava
+      - name: Validate optional compatibility stack and migrated research source
+        run: |
+          gradle -p apps/desktop setupLocalBackend buildFrontend syncFrontendResources
+          python -m compileall -q backend training/src scripts/ml
+          python -c "import glob,json; [json.load(open(p,encoding='utf-8')) for p in glob.glob('training/*.ipynb')]; print('All training notebooks are valid JSON')"
       - name: Smoke test migrated FastAPI with local SQLite (Ubuntu)
         if: runner.os == 'Linux'
         run: backend/.venv/bin/python backend/tests/smoke_local_backend.py
