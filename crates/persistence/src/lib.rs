@@ -300,6 +300,15 @@ mod tests {
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, asset_tag TEXT NOT NULL UNIQUE,
                 machine_type TEXT NOT NULL, location TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL
             );
+            CREATE TABLE audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor TEXT NOT NULL,
+                action TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT,
+                details_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE telemetry_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 machine_id TEXT NOT NULL REFERENCES machines(id),
