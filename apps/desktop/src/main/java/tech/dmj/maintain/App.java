@@ -6,26 +6,40 @@ import javafx.concurrent.Worker;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
-import javafx.scene.control.ProgressIndicator;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.scene.web.WebView;
 import javafx.stage.Stage;
 
-/** JavaFX desktop host for the migrated MAINTAIN AI React application. */
+/** JavaFX-first desktop host for the native MAINTAIN AI workspace. */
 public final class App extends Application {
     private static final String BG = "#12161d";
+
     private final EngineSupervisor engine = new EngineSupervisor();
+    private final EngineIpcClient engineClient = new EngineIpcClient();
     private final BackendSupervisor backend = new BackendSupervisor();
     private final LocalFrontendServer frontend = new LocalFrontendServer();
-    private StackPane root;
 
-    @Override public void start(Stage stage) {
+    private StackPane root;
+    private Stage primaryStage;
+    private Stage compatibilityStage;
+    private volatile boolean compatibilityStarting;
+
+    @Override
+    public void start(Stage stage) {
+        primaryStage = stage;
         root = new StackPane();
         root.setStyle("-fx-background-color:" + BG + ";");
-        root.getChildren().add(splash("Starting local services", "Rust engine · migrated FastAPI · SQLite"));
+        root.getChildren().add(splash("Starting native workspace", "JavaFX desktop · Rust engine · local SQLite"));
+
         stage.setTitle("MAINTAIN AI · Native");
         stage.setMinWidth(1120);
         stage.setMinHeight(720);
@@ -36,10 +50,7 @@ public final class App extends Application {
         Thread.ofVirtual().start(() -> {
             try {
                 EngineIpcClient.EngineStatus engineStatus = engine.startAndPing();
-                frontend.start();
-                String api = backend.startAndWait();
-                frontend.setBackendTarget(api);
-                Platform.runLater(() -> showMigratedApplication(stage, engineStatus.engine(), api));
+                Platform.runLater(() -> showNativeWorkspace(engineStatus.engine()));
             } catch (Exception error) {
                 Platform.runLater(() -> showStartupError(error));
             }
@@ -57,26 +68,95 @@ public final class App extends Application {
         title.setTextFill(Color.web("#dfe7f0"));
         Label subtitle = new Label(detail);
         subtitle.setTextFill(Color.web("#8996a8"));
-        ProgressIndicator progress = new ProgressIndicator();
+        javafx.scene.control.ProgressIndicator progress = new javafx.scene.control.ProgressIndicator();
         progress.setPrefSize(38, 38);
         panel.getChildren().addAll(brand, title, subtitle, progress);
         return panel;
     }
 
-    private void showMigratedApplication(Stage stage, String engineName, String apiUrl) {
+    private void showNativeWorkspace(String engineName) {
+        NativeWorkspaceView workspace = new NativeWorkspaceView(
+                engineName,
+                engineClient,
+                this::openCompatibilityWorkspace
+        );
+        root.getChildren().setAll(workspace);
+        primaryStage.setTitle("MAINTAIN AI · Native Workspace");
+        System.out.println("MAINTAIN AI Native ready. Rust engine: " + engineName);
+    }
+
+    /**
+     * Starts the copied React/FastAPI application only when the user opens the
+     * temporary compatibility workspace. The normal desktop start path is JavaFX + Rust.
+     */
+    private void openCompatibilityWorkspace() {
+        if (compatibilityStage != null && compatibilityStage.isShowing()) {
+            compatibilityStage.toFront();
+            return;
+        }
+        if (compatibilityStarting) return;
+        compatibilityStarting = true;
+
+        Thread.ofVirtual().start(() -> {
+            try {
+                String api = backend.startAndWait();
+                frontend.start();
+                frontend.setBackendTarget(api);
+                Platform.runLater(() -> showCompatibilityWindow(api));
+            } catch (Exception error) {
+                Platform.runLater(() -> {
+                    compatibilityStarting = false;
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("Compatibility workspace unavailable");
+                    alert.setHeaderText("The remaining migrated features could not be started");
+                    alert.setContentText(error.getMessage() == null ? error.toString() : error.getMessage());
+                    alert.showAndWait();
+                });
+            }
+        });
+    }
+
+    private void showCompatibilityWindow(String apiUrl) {
         WebView webView = new WebView();
         webView.setContextMenuEnabled(false);
         webView.getEngine().setJavaScriptEnabled(true);
         webView.getEngine().getLoadWorker().stateProperty().addListener((observable, oldState, state) -> {
             if (state == Worker.State.FAILED) {
-                System.err.println("React frontend failed to load: " + webView.getEngine().getLoadWorker().getException());
+                System.err.println("Compatibility frontend failed to load: "
+                        + webView.getEngine().getLoadWorker().getException());
             }
         });
-        root.getChildren().setAll(webView);
+
+        Button close = new Button("←  Back to native workspace");
+        close.setStyle("-fx-background-color:#263444;-fx-text-fill:#e8eef7;-fx-background-radius:8;"
+                + "-fx-padding:8 12;-fx-font-weight:bold;");
+        close.setOnAction(event -> compatibilityStage.close());
+
+        Label notice = new Label("COMPATIBILITY MODE  ·  Some workflows are still being migrated from the original stack");
+        notice.setStyle("-fx-text-fill:#d6c28c;-fx-font-size:10px;-fx-font-weight:bold;");
+
+        HBox toolbar = new HBox(16, close, notice);
+        toolbar.setAlignment(Pos.CENTER_LEFT);
+        toolbar.setPadding(new Insets(10, 14, 10, 14));
+        toolbar.setStyle("-fx-background-color:#141c27;-fx-border-color:#303d4e;-fx-border-width:0 0 1 0;");
+
+        BorderPane shell = new BorderPane(webView);
+        shell.setTop(toolbar);
+        shell.setStyle("-fx-background-color:#101720;");
+
+        compatibilityStage = new Stage();
+        compatibilityStage.initOwner(primaryStage);
+        compatibilityStage.setTitle("MAINTAIN AI · Compatibility Workspace");
+        compatibilityStage.setMinWidth(1120);
+        compatibilityStage.setMinHeight(720);
+        compatibilityStage.setScene(new Scene(shell, 1440, 900));
+        compatibilityStage.setOnHidden(event -> {
+            compatibilityStage = null;
+            compatibilityStarting = false;
+        });
+        compatibilityStage.show();
         webView.getEngine().load(frontend.origin() + "/");
-        stage.setTitle("MAINTAIN AI · Native");
-        System.out.println("MAINTAIN AI Native ready. Rust: " + engineName + "; local API: " + apiUrl);
-        System.out.println("SQLite: " + BackendSupervisor.applicationDataDirectory().resolve("maintain-ai.sqlite3"));
+        System.out.println("Compatibility workspace ready. Local API: " + apiUrl);
     }
 
     private void showStartupError(Exception error) {
@@ -85,29 +165,36 @@ public final class App extends Application {
         panel.setMaxWidth(760);
         panel.setPadding(new Insets(30));
         panel.setStyle("-fx-background-color:#1b222d;-fx-background-radius:16;-fx-border-color:#3a4656;-fx-border-radius:16;");
-        Label title = new Label("MAINTAIN AI could not start its local services");
+        Label title = new Label("MAINTAIN AI could not start the native Rust engine");
         title.setTextFill(Color.web("#f1f4f8"));
         title.setStyle("-fx-font-size:19px;-fx-font-weight:bold;");
         Label message = new Label(error.getMessage() == null ? error.toString() : error.getMessage());
         message.setWrapText(true);
         message.setTextFill(Color.web("#d5dce7"));
-        Label log = new Label("Backend log: " + BackendSupervisor.applicationDataDirectory().resolve("logs/backend.log"));
-        log.setWrapText(true);
-        log.setTextFill(Color.web("#8996a8"));
-        Label help = new Label("Run from apps/desktop with: gradle run. First setup needs Rust, JDK 21, Node.js 20 and Python 3.");
+        Label help = new Label("Build the Rust engine with: cargo build --package maintain-engine. Then run from apps/desktop with: gradle run.");
         help.setWrapText(true);
         help.setTextFill(Color.web("#35d0bd"));
-        panel.getChildren().addAll(title, message, log, help);
+        panel.getChildren().addAll(title, message, help);
         root.getChildren().setAll(panel);
         error.printStackTrace(System.err);
     }
 
     private void shutdown() {
+        if (compatibilityStage != null) {
+            compatibilityStage.close();
+            compatibilityStage = null;
+        }
         frontend.close();
         backend.close();
         engine.close();
     }
 
-    @Override public void stop() { shutdown(); }
-    public static void main(String[] args) { launch(args); }
+    @Override
+    public void stop() {
+        shutdown();
+    }
+
+    public static void main(String[] args) {
+        launch(args);
+    }
 }
