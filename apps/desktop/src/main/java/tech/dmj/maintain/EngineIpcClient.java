@@ -32,6 +32,9 @@ public final class EngineIpcClient {
     public record MachineDto(
             String id, String name, String assetTag, String machineType,
             String location, String status, String createdAt) {}
+    public record TelemetryDto(
+            long id, String machineId, String metric, double value,
+            String unit, String source, String observedAt) {}
 
     public EngineStatus pingWithRetry(Duration timeout) throws IOException, InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -73,6 +76,58 @@ public final class EngineIpcClient {
         JsonNode response = send("create_machine", payload);
         requireKind(response, "machine_created");
         return readMachine(response.path("message").path("payload").path("machine"));
+    }
+
+
+    public TelemetryDto recordTelemetry(
+            String machineId,
+            String metric,
+            double value,
+            String unit,
+            String source,
+            String observedAt
+    ) throws IOException {
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("machine_id", machineId);
+        payload.put("metric", metric);
+        payload.put("value", value);
+        payload.put("unit", unit == null ? "" : unit);
+        payload.put("source", source == null ? "manual" : source);
+        if (observedAt != null && !observedAt.isBlank()) {
+            payload.put("observed_at", observedAt);
+        }
+        JsonNode response = send("record_telemetry", payload);
+        requireKind(response, "telemetry_recorded");
+        return readTelemetry(response.path("message").path("payload").path("record"));
+    }
+
+    public List<TelemetryDto> listTelemetry(String machineId, String metric, int limit)
+            throws IOException {
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("machine_id", machineId);
+        payload.put("limit", Math.max(1, Math.min(limit, 500)));
+        if (metric != null && !metric.isBlank()) {
+            payload.put("metric", metric.trim());
+        }
+        JsonNode response = send("list_telemetry", payload);
+        requireKind(response, "telemetry_listed");
+        List<TelemetryDto> records = new ArrayList<>();
+        for (JsonNode node : response.path("message").path("payload").path("records")) {
+            records.add(readTelemetry(node));
+        }
+        return records;
+    }
+
+    private static TelemetryDto readTelemetry(JsonNode node) {
+        return new TelemetryDto(
+                node.path("id").asLong(),
+                node.path("machine_id").asText(),
+                node.path("metric").asText(),
+                node.path("value").asDouble(),
+                node.path("unit").asText(""),
+                node.path("source").asText("manual"),
+                node.path("observed_at").asText()
+        );
     }
 
     private static MachineDto readMachine(JsonNode node) {
