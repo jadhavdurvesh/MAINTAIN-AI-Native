@@ -215,16 +215,16 @@ public final class NativeWorkspaceView extends BorderPane {
         telemetryUnit.setPromptText("Unit (°C)");
         telemetryUnit.setPrefWidth(95);
 
-        Button record = new Button("+  Record reading");
-        record.setStyle(buttonStyle(true));
-        record.setOnAction(event -> recordTelemetry());
+        Button recordButton = new Button("+  Record reading");
+        recordButton.setStyle(buttonStyle(true));
+        recordButton.setOnAction(event -> recordTelemetry());
 
         Button reload = new Button("Refresh");
         reload.setStyle(buttonStyle(false));
         reload.setOnAction(event -> refreshTelemetry());
 
         controls.getChildren().addAll(
-                telemetryMachine, telemetryMetric, telemetryValue, telemetryUnit, record, reload
+                telemetryMachine, telemetryMetric, telemetryValue, telemetryUnit, recordButton, reload
         );
 
         telemetryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
@@ -232,11 +232,11 @@ public final class NativeWorkspaceView extends BorderPane {
                 + "-fx-table-cell-border-color:#263241;-fx-text-background-color:" + TEXT
                 + ";-fx-selection-bar:#1a4846;-fx-selection-bar-non-focused:#263b43;");
         telemetryTable.getColumns().setAll(
-                telemetryColumn("RECORDED AT", 1.5, record -> record.observedAt()),
-                telemetryColumn("SIGNAL", 1.1, record -> record.metric()),
-                telemetryColumn("VALUE", 0.8, record -> String.format(java.util.Locale.ROOT, "%.4f", record.value())),
-                telemetryColumn("UNIT", 0.55, record -> record.unit()),
-                telemetryColumn("SOURCE", 0.7, record -> record.source())
+                telemetryColumn("RECORDED AT", 1.5, sample -> sample.observedAt()),
+                telemetryColumn("SIGNAL", 1.1, sample -> sample.metric()),
+                telemetryColumn("VALUE", 0.8, sample -> String.format(java.util.Locale.ROOT, "%.4f", sample.value())),
+                telemetryColumn("UNIT", 0.55, sample -> sample.unit()),
+                telemetryColumn("SOURCE", 0.7, sample -> sample.source())
         );
         telemetryTable.setPlaceholder(new Label("No readings for this machine yet."));
         telemetryTable.setPrefHeight(430);
