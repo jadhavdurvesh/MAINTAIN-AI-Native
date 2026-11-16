@@ -4,6 +4,7 @@ Optional live-sensor integration for the Lab branch.
 REST ingestion remains backwards compatible. The Lab branch additionally
 supports a long-lived WebSocket connection for continuous telemetry.
 """
+import asyncio
 import secrets
 from datetime import datetime, timezone
 
