@@ -83,14 +83,19 @@ public final class NativeWorkspaceView extends BorderPane {
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
 
-        Label engineBadge = new Label("●  RUST ENGINE CONNECTED");
+        Label engineBadge = new Label("●  " + (engineName == null || engineName.isBlank() ? "RUST ENGINE CONNECTED" : engineName));
         engineBadge.setStyle("-fx-text-fill:" + ACCENT
                 + ";-fx-background-color:#15302f;-fx-background-radius:20;-fx-padding:8 12;"
                 + "-fx-font-size:10px;-fx-font-weight:bold;");
 
-        Button compatibility = new Button("Open remaining features  ↗");
-        compatibility.setStyle(buttonStyle(true));
-        compatibility.setOnAction(event -> openCompatibilityWorkspace.run());
+        Button compatibility = new Button(openCompatibilityWorkspace == null
+                ? "Legacy features · run gradle runCompatibility"
+                : "Open remaining features  ↗");
+        compatibility.setStyle(buttonStyle(openCompatibilityWorkspace != null));
+        compatibility.setDisable(openCompatibilityWorkspace == null);
+        compatibility.setOnAction(event -> {
+            if (openCompatibilityWorkspace != null) openCompatibilityWorkspace.run();
+        });
 
         header.getChildren().addAll(mark, identity, spacer, engineBadge, compatibility);
         return header;
