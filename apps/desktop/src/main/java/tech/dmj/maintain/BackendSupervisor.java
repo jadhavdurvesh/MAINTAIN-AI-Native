@@ -40,6 +40,7 @@ public final class BackendSupervisor implements AutoCloseable {
         env.put("SEED_DEMO_DATA", "false");
         env.put("VERCEL", "");
         env.put("CORS_ORIGINS", "");
+        env.put("MAINTAIN_NATIVE_MODE", "true");
         env.put("PYTHONPATH", backendDir.toString());
         env.put("PYTHONUNBUFFERED", "1");
         env.put("SUPABASE_URL", "");

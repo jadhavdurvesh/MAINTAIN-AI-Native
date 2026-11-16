@@ -214,7 +214,8 @@ app = FastAPI(title="YantraChikitsa", description="AI-powered predictive mainten
 _configured_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",") if o.strip()]
 # Device telemetry is also sent by the standalone simulator. Keep both the
 # legacy Cloudflare simulator and the current Netlify deployment allowed.
-_simulator_origins = [
+_native_desktop = os.getenv("MAINTAIN_NATIVE_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+_simulator_origins = [] if _native_desktop else [
     "https://maintain-ai-sensor-simulator.jadhavdurvesh65.workers.dev",
     "https://specialized-machine-simulator-hub.netlify.app",
 ]
