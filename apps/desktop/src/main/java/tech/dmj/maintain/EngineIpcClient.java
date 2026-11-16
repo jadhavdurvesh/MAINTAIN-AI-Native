@@ -40,7 +40,7 @@ public final class EngineIpcClient {
             try {
                 JsonNode response = send("ping", null);
                 requireKind(response, "pong");
-                JsonNode payload = response.path("payload");
+                JsonNode payload = response.path("message").path("payload");
                 return new EngineStatus(
                         payload.path("engine").asText("MAINTAIN AI Native Engine"),
                         payload.path("protocol_version").asInt(-1));
@@ -56,7 +56,7 @@ public final class EngineIpcClient {
         JsonNode response = send("list_machines", null);
         requireKind(response, "machines_listed");
         List<MachineDto> machines = new ArrayList<>();
-        for (JsonNode node : response.path("payload").path("machines")) {
+        for (JsonNode node : response.path("message").path("payload").path("machines")) {
             machines.add(readMachine(node));
         }
         return machines;
@@ -72,7 +72,7 @@ public final class EngineIpcClient {
         );
         JsonNode response = send("create_machine", payload);
         requireKind(response, "machine_created");
-        return readMachine(response.path("payload").path("machine"));
+        return readMachine(response.path("message").path("payload").path("machine"));
     }
 
     private static MachineDto readMachine(JsonNode node) {
@@ -163,5 +163,9 @@ public final class EngineIpcClient {
         }
         return Path.of(System.getProperty("user.home"), ".local", "share",
                 "DMJ Group", "MAINTAIN AI Native");
+    }
+
+    private static boolean isWindows() {
+        return System.getProperty("os.name", "").toLowerCase().contains("win");
     }
 }
