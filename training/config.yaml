@@ -27,6 +27,7 @@ datasets:
   nasa_cmapss:
     enabled: true
     task: degradation_rul_pretraining
+  # Planned only: no CG-IPM-15 adapter is included in this training pipeline yet.
   pump_crompton_greaves:
-    enabled: true
+    enabled: false
     task: pump_condition
