@@ -1,0 +1,12 @@
+syntax = "proto3";
+package maintain.engine.v1;
+option java_package = "tech.dmj.maintain.protocol.v1";
+option java_multiple_files = true;
+message Envelope { string request_id = 1; uint32 protocol_version = 2; oneof body { EngineRequest request = 3; EngineResponse response = 4; } }
+message EngineRequest { oneof operation { Ping ping = 1; GetSystemStatus get_system_status = 2; } }
+message Ping {}
+message GetSystemStatus {}
+message EngineResponse { oneof result { Pong pong = 1; SystemStatus system_status = 2; Error error = 3; } }
+message Pong { uint32 protocol_version = 1; string engine = 2; }
+message SystemStatus { bool ready = 1; string database = 2; }
+message Error { string code = 1; string message = 2; }
