@@ -3,6 +3,10 @@ name = "maintain-persistence"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
+maintain-app-core = { path = "../app-core" }
 rusqlite.workspace = true
+uuid.workspace = true
