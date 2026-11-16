@@ -1,0 +1,27 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+pydantic==2.12.5
+python-multipart==0.0.9
+python-dotenv==1.0.1
+reportlab==4.2.5
+openpyxl==3.1.5
+pyjwt==2.9.0
+email-validator==2.2.0
+firebase-admin==6.9.0
+
+# Optional — only needed if you point DATABASE_URL at a hosted Postgres
+# instance instead of the default local SQLite file.
+psycopg2-binary==2.9.9
+
+# Optional — only needed if you use the online Gemini diagnostic path.
+google-genai==2.23.0
+
+# Lightweight batch inference/training dependencies are included in the API runtime.
+# Heavy deep-learning/training dependencies remain in requirements-ml.txt.
+numpy==2.1.1
+scikit-learn==1.5.2
+joblib==1.4.2
+
+# Supabase JWT signature verification for asymmetric signing keys.
+cryptography==43.0.1
