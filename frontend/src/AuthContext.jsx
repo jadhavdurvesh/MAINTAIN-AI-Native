@@ -64,6 +64,9 @@ export function AuthProvider({ children }) {
           }
         } else if (status.auth_required && getToken()) {
           await loadMe()
+        } else if (!status.auth_required) {
+          // Local desktop installations receive the backend's local administrator context.
+          await loadMe()
         }
       } catch (error) {
         if (mounted) {

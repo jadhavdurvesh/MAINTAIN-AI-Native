@@ -2,34 +2,74 @@ plugins {
     id 'application'
     id 'org.openjfx.javafxplugin' version '0.1.0'
 }
-
 group = 'tech.dmj.maintain'
-version = '0.1.0'
-
+version = '0.2.0'
 repositories { mavenCentral() }
-
-dependencies {
-    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.3'
-}
-
-java {
-    toolchain { languageVersion = JavaLanguageVersion.of(21) }
-}
-
-javafx {
-    version = '21.0.5'
-    modules = [ 'javafx.controls', 'javafx.graphics' ]
-}
-
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+javafx { version = '21.0.5'; modules = ['javafx.controls', 'javafx.graphics', 'javafx.web'] }
 application {
     mainClass = 'tech.dmj.maintain.App'
+    applicationDefaultJvmArgs = ['--add-modules=jdk.httpserver']
 }
+def repoRoot = projectDir.toPath().resolve('../..').normalize().toFile()
+def frontendDir = new File(repoRoot, 'frontend')
+def backendDir = new File(repoRoot, 'backend')
+def windowsHost = System.getProperty('os.name').toLowerCase().contains('win')
+def npmLauncher = windowsHost ? ['cmd', '/c', 'npm'] : ['npm']
+def pythonLauncher = System.getenv('PYTHON') ?: (windowsHost ? 'python' : 'python3')
+def venvPython = new File(backendDir, windowsHost ? '.venv/Scripts/python.exe' : '.venv/bin/python')
+def backendStamp = new File(backendDir, '.venv/.maintain-requirements.sha256')
+sourceSets { main { resources.srcDir(layout.buildDirectory.dir('generated-resources')) } }
+
+tasks.register('installFrontendDependencies', Exec) {
+    workingDir frontendDir
+    commandLine(*(npmLauncher + ['ci', '--no-audit', '--no-fund']))
+    inputs.files(new File(frontendDir, 'package.json'), new File(frontendDir, 'package-lock.json'))
+    outputs.dir(new File(frontendDir, 'node_modules'))
+}
+tasks.register('buildFrontend', Exec) {
+    dependsOn 'installFrontendDependencies'
+    workingDir frontendDir
+    commandLine(*(npmLauncher + ['run', 'build']))
+    inputs.dir(new File(frontendDir, 'src'))
+    inputs.file(new File(frontendDir, 'index.html'))
+    inputs.file(new File(frontendDir, 'vite.config.js'))
+    outputs.dir(new File(frontendDir, 'dist'))
+}
+tasks.register('syncFrontendResources', Copy) {
+    dependsOn 'buildFrontend'
+    from new File(frontendDir, 'dist')
+    into layout.buildDirectory.dir('generated-resources/web')
+}
+tasks.named('processResources') { dependsOn 'syncFrontendResources' }
 
 tasks.register('buildRustEngine', Exec) {
-    workingDir file('../..')
+    workingDir repoRoot
     commandLine 'cargo', 'build', '--package', 'maintain-engine'
 }
-
+tasks.register('setupLocalBackend') {
+    inputs.file(new File(backendDir, 'requirements.txt'))
+    outputs.file(backendStamp)
+    doLast {
+        if (!venvPython.isFile()) {
+            exec {
+                workingDir backendDir
+                commandLine pythonLauncher, '-m', 'venv', '.venv'
+            }
+        }
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+                .digest(new File(backendDir, 'requirements.txt').bytes).encodeHex().toString()
+        if (!backendStamp.isFile() || backendStamp.text.trim() != digest) {
+            exec {
+                workingDir backendDir
+                commandLine venvPython.absolutePath, '-m', 'pip', 'install',
+                        '--disable-pip-version-check', '--no-warn-script-location', '-r', 'requirements.txt'
+            }
+            backendStamp.parentFile.mkdirs()
+            backendStamp.text = digest
+        }
+    }
+}
 tasks.named('run') {
-    dependsOn 'buildRustEngine'
+    dependsOn 'buildRustEngine', 'setupLocalBackend', 'processResources'
 }
