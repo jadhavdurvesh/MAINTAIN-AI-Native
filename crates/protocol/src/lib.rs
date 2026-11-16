@@ -1,5 +1,5 @@
 //! Versioned local IPC contract shared by the desktop and Rust engine.
-use maintain_app_core::Machine;
+use maintain_app_core::{Machine, TelemetryRecord};
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -16,6 +16,19 @@ pub enum EngineRequest {
         machine_type: String,
         location: Option<String>,
     },
+    RecordTelemetry {
+        machine_id: String,
+        metric: String,
+        value: f64,
+        unit: String,
+        source: String,
+        observed_at: Option<String>,
+    },
+    ListTelemetry {
+        machine_id: String,
+        metric: Option<String>,
+        limit: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,6 +38,8 @@ pub enum EngineResponse {
     SystemStatus { ready: bool, database: String },
     MachinesListed { machines: Vec<Machine> },
     MachineCreated { machine: Machine },
+    TelemetryRecorded { record: TelemetryRecord },
+    TelemetryListed { records: Vec<TelemetryRecord> },
     Error { code: String, message: String },
 }
 
@@ -71,5 +86,23 @@ mod tests {
         let serialized = serde_json::to_string(&request).unwrap();
         let decoded: IpcEnvelope<EngineRequest> = serde_json::from_str(&serialized).unwrap();
         assert!(matches!(decoded.message, EngineRequest::CreateMachine { .. }));
+    }
+
+    #[test]
+    fn telemetry_requests_round_trip() {
+        let request = IpcEnvelope::new(
+            "telemetry-1",
+            EngineRequest::RecordTelemetry {
+                machine_id: "b9f2f45e-2f18-42d9-9d27-4d90d3b1a2f5".into(),
+                metric: "temperature".into(),
+                value: 42.5,
+                unit: "°C".into(),
+                source: "manual".into(),
+                observed_at: None,
+            },
+        );
+        let serialized = serde_json::to_string(&request).unwrap();
+        let decoded: IpcEnvelope<EngineRequest> = serde_json::from_str(&serialized).unwrap();
+        assert!(matches!(decoded.message, EngineRequest::RecordTelemetry { .. }));
     }
 }
