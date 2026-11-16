@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Header, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, audit
@@ -508,13 +509,20 @@ def latest_local_telemetry(
     current: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return the latest persisted sample for each machine/signal in this local workspace.
-
-    The native desktop polls this endpoint instead of depending on Supabase Realtime.
-    Scope is still enforced by organization and technician assignment.
-    """
+    """Return the newest persisted reading for every machine/signal in this workspace."""
+    latest_ids = (
+        db.query(func.max(models.SensorReading.id).label("reading_id"))
+        .join(models.Machine, models.Machine.id == models.SensorReading.machine_id)
+        .filter(
+            models.Machine.organization_id == current.organization_id,
+            models.Machine.archived.is_(False),
+        )
+        .group_by(models.SensorReading.machine_id, models.SensorReading.reading_type)
+        .subquery()
+    )
     query = (
         db.query(models.SensorReading, models.Machine)
+        .join(latest_ids, models.SensorReading.id == latest_ids.c.reading_id)
         .join(models.Machine, models.Machine.id == models.SensorReading.machine_id)
         .filter(
             models.Machine.organization_id == current.organization_id,
@@ -527,25 +535,23 @@ def latest_local_telemetry(
             models.UserMachineAssignment.machine_id == models.Machine.id,
         ).filter(models.UserMachineAssignment.user_id == current.id)
 
-    rows = query.order_by(models.SensorReading.id.desc()).limit(2000).all()
-    latest_by_signal = {}
-    for reading, machine in rows:
-        key = (machine.id, reading.reading_type)
-        if key in latest_by_signal:
-            continue
-        latest_by_signal[key] = {
-            "type": "telemetry",
-            "machine_id": machine.id,
-            "machine": machine.name,
-            "reading_id": reading.id,
-            "reading_type": reading.reading_type,
-            "value": reading.value,
-            "unit": reading.unit,
-            "recorded_at": reading.recorded_at,
-            "source": reading.source,
-        }
-
-    return {"machines": list(latest_by_signal.values())}
+    rows = query.order_by(models.Machine.name.asc(), models.SensorReading.reading_type.asc()).all()
+    return {
+        "machines": [
+            {
+                "type": "telemetry",
+                "machine_id": machine.id,
+                "machine": machine.name,
+                "reading_id": reading.id,
+                "reading_type": reading.reading_type,
+                "value": reading.value,
+                "unit": reading.unit,
+                "recorded_at": reading.recorded_at,
+                "source": reading.source,
+            }
+            for reading, machine in rows
+        ]
+    }
 
 
 @router.get("/{machine_id}/status", response_model=DeviceStatusOut)

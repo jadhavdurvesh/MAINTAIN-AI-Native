@@ -76,7 +76,7 @@ function TelemetryFallback() {
         for (const row of rows) {
           if (row?.machine_id == null || !row?.reading_type) continue
           const recorded = row.recorded_at ? Date.parse(row.recorded_at) : NaN
-          if (Number.isFinite(recorded) && now - recorded < 5000) fresh = true
+          if (Number.isFinite(recorded) && now - recorded < 15 * 60 * 1000) fresh = true
           const key = `${row.machine_id}:${row.reading_type}`
           if (seen.get(key) === row.reading_id) continue
           seen.set(key, row.reading_id)

@@ -48,6 +48,19 @@ def get_json(base: str, path: str) -> tuple[int, dict | list]:
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
+def post_json(base: str, path: str, payload: dict, headers: dict | None = None) -> tuple[int, dict | list]:
+    request_headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    request_headers.update(headers or {})
+    request = Request(
+        base + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=request_headers,
+        method="POST",
+    )
+    with urlopen(request, timeout=10) as response:
+        return response.status, json.loads(response.read().decode("utf-8"))
+
+
 def main() -> None:
     port = free_port()
     with tempfile.TemporaryDirectory(prefix="maintain-native-smoke-") as temporary:
@@ -112,15 +125,51 @@ def main() -> None:
                 assert machines_code == 200, machines
                 assert isinstance(machines, list), machines
 
+                create_code, created = post_json(base, "/api/machines", {
+                    "machine_code": "NATIVE-SMOKE-001",
+                    "name": "Native telemetry smoke machine",
+                    "category": "industrial",
+                    "location": "CI test bench",
+                    "criticality": "medium",
+                })
+                assert create_code == 200, created
+                machine_id = created["id"]
+
+                enable_code, device = post_json(base, f"/api/devices/{machine_id}/enable", {})
+                assert enable_code == 200, device
+                device_key = device["device_key"]
+                assert device_key, device
+
+                ingest_code, ingest = post_json(
+                    base,
+                    "/api/devices/ingest",
+                    {
+                        "reading_type": "temperature",
+                        "value": 42.5,
+                        "unit": "°C",
+                        "event_id": "native-smoke-reading-001",
+                    },
+                    {"X-Device-Key": device_key},
+                )
+                assert ingest_code == 200, ingest
+                assert ingest.get("accepted") is True, ingest
+
                 telemetry_code, telemetry = get_json(base, "/api/devices/telemetry/latest?ts=1")
                 assert telemetry_code == 200, telemetry
-                assert isinstance(telemetry.get("machines"), list), telemetry
+                readings = telemetry.get("machines", [])
+                latest = next(
+                    (row for row in readings if row.get("machine_id") == machine_id
+                     and row.get("reading_type") == "temperature"),
+                    None,
+                )
+                assert latest is not None, telemetry
+                assert latest["value"] == 42.5, latest
+                assert latest["source"] == "sensor", latest
 
                 assert database.is_file(), f"SQLite file was not created: {database}"
                 print(
-                    "Local backend smoke test passed: auth mode, core routers, "
-                    f"local administrator, machine registry ({len(machines)} machines), "
-                    f"and local telemetry poll ({len(telemetry['machines'])} signals)."
+                    "Local backend smoke test passed: auth mode, core routers, local admin, "
+                    "machine creation, authenticated sensor ingest, and SQLite-backed live telemetry polling."
                 )
             except Exception:
                 try:
