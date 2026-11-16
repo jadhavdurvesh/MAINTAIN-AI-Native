@@ -7,12 +7,14 @@
 - [x] Local EWMA detector starter
 - [x] Versioned IPC envelope and Protobuf schema
 - [x] JavaFX shell with product navigation and visual direction
-- [ ] Validate Windows and Linux builds in CI
+- [x] Desktop starts the Rust engine and confirms local IPC ping
+- [ ] Validate JavaFX launch on Windows and Linux
 
 ## Slice 1 — Engine lifecycle
-- [ ] Start/stop engine from JavaFX lifecycle
-- [ ] Java IPC client for Unix socket and Windows named pipe
-- [ ] Ping/status integration and restart handling
+- [x] Start engine from JavaFX lifecycle and stop child on desktop close
+- [x] Ping over Unix socket / Windows named pipe
+- [ ] Robust single-instance ownership and restart recovery
+- [ ] Java-side engine status polling and diagnostics
 
 ## Slice 2 — Asset registry
 - [ ] Machine CRUD, validation, sensor configuration, detail view
