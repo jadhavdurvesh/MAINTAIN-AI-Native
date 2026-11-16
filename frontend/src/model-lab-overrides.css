@@ -1,0 +1,93 @@
+/* MAINTAIN AI — Model Lab compact workspace
+   Preserve the JSX workflow order. Layout CSS should compress the page,
+   not reorder functional sections by fragile :has() selectors.
+*/
+
+@media (min-width: 1100px) {
+  .content:has(option[value="timer"]) {
+    padding-bottom: 18px;
+  }
+
+  .content:has(option[value="timer"]) > .section-gap {
+    margin-bottom: 12px;
+  }
+
+  .content:has(option[value="timer"]) .panel-header {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+
+  .content:has(option[value="timer"]) .panel-body {
+    padding: 14px 16px;
+  }
+
+  /* Keep the configured workflow in DOM order:
+     intro → configuration → errors/feedback → status → chart → horizons → history → supporting info. */
+  .content:has(option[value="timer"]) > .panel,
+  .content:has(option[value="timer"]) > .stat-grid {
+    order: initial !important;
+  }
+
+  .content:has(option[value="timer"]) > .panel:has(label select) .grid-2 {
+    gap: 12px;
+    margin-bottom: 10px !important;
+  }
+
+  .content:has(option[value="timer"]) > .panel:has(label select) .panel-body {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  /* The four long-horizon cards stay compact and visually connected. */
+  .content:has(option[value="timer"]) > .panel:has(.stat-grid) .stat-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+    margin-bottom: 0;
+  }
+
+  .content:has(option[value="timer"]) > .panel:has(.stat-grid) .stat-tile {
+    min-height: 126px !important;
+    padding: 13px 14px;
+  }
+
+  .content:has(option[value="timer"]) > .panel:has(.stat-grid) .stat-value {
+    font-size: 19px !important;
+  }
+
+  /* Latest forecast chart: prominent, but not oversized. */
+  .content:has(option[value="timer"]) > .panel:has(svg[aria-label="Observed telemetry and saved forecast"]) .panel-body {
+    padding-top: 12px;
+  }
+
+  .content:has(option[value="timer"]) > .panel:has(svg[aria-label="Observed telemetry and saved forecast"]) svg {
+    height: 220px;
+  }
+
+  /* Machine/model/telemetry summary remains a single compact strip. */
+  .content:has(option[value="timer"]) > .stat-grid.section-gap {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .content:has(option[value="timer"]) > .stat-grid.section-gap .stat-tile {
+    padding: 12px 14px;
+  }
+
+  .content:has(option[value="timer"]) > .stat-grid.section-gap .stat-value {
+    font-size: 25px;
+  }
+
+  .content:has(option[value="timer"]) table {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 1099px) {
+  .content:has(option[value="timer"]) .section-gap {
+    margin-bottom: 12px;
+  }
+
+  .content:has(option[value="timer"]) .panel-body {
+    padding: 14px;
+  }
+}
