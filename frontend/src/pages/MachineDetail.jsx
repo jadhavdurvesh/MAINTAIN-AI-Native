@@ -1,0 +1,651 @@
+import { useEffect, useState, useMemo } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import api, { getToken, clearApiCache } from '../api/client.js'
+import { formatDateTime, formatDate } from '../utils/dates.js'
+import StatusBadge from '../components/StatusBadge.jsx'
+import { Loading, ErrorState } from './Dashboard.jsx'
+import { usePageHeader } from '../PageHeaderContext.jsx'
+import { useAuth } from '../AuthContext.jsx'
+import MachinePerformanceCard from '../components/MachinePerformanceCard.jsx'
+
+export default function MachineDetail() {
+  const { id } = useParams()
+  const navigate = useNavigate()
+  const { user } = useAuth()
+  const canEdit = user?.role === 'admin'
+  const [machine, setMachine] = useState(null)
+  const [components, setComponents] = useState([])
+  const [readings, setReadings] = useState([])
+  const [maintenance, setMaintenance] = useState([])
+  const [error, setError] = useState(null)
+  const [newReading, setNewReading] = useState({ reading_type: 'temperature', value: '', unit: '°C' })
+  const [newComponent, setNewComponent] = useState('')
+  const [deviceStatus, setDeviceStatus] = useState(null)
+  const [deviceBusy, setDeviceBusy] = useState(false)
+  const [deviceError, setDeviceError] = useState(null)
+  const [revealedKey, setRevealedKey] = useState(null)
+  const [keyAction, setKeyAction] = useState(null)
+  const [keyConfirmation, setKeyConfirmation] = useState('')
+  const [liveReadings, setLiveReadings] = useState({})
+  const [liveHistory, setLiveHistory] = useState({})
+  const [liveConnected, setLiveConnected] = useState(false)
+  const [intelligence, setIntelligence] = useState(null)
+  const [safety, setSafety] = useState(null)
+  const [safetyForm, setSafetyForm] = useState({ enabled: false, monitored_reading_type: 'temperature', unit: '°C', warning_low: '', warning_high: '', shutdown_low: '', shutdown_high: '', auto_shutdown_enabled: false })
+  const [safetyPolicies, setSafetyPolicies] = useState([])
+  const [selectedSafetySignal, setSelectedSafetySignal] = useState('temperature')
+  const safetyDefaults = { temperature: { label: 'Temperature', unit: '°C', warningLow: 10, warningHigh: 40, shutdownLow: 5, shutdownHigh: 45 }, vibration: { label: 'Vibration', unit: 'g', warningLow: 0.8, warningHigh: 2, shutdownLow: 0, shutdownHigh: 3 }, current: { label: 'Motor Current', unit: 'A', warningLow: 1, warningHigh: 8, shutdownLow: 0, shutdownHigh: 12 }, load: { label: 'Machine Load', unit: '%', warningLow: 10, warningHigh: 80, shutdownLow: 5, shutdownHigh: 95 }, humidity: { label: 'Humidity', unit: '%', warningLow: 10, warningHigh: 70, shutdownLow: 5, shutdownHigh: 85 } }
+  const [safetyBusy, setSafetyBusy] = useState(false)
+  const [safetyEvent, setSafetyEvent] = useState(null)
+  const [safetyError, setSafetyError] = useState(null)
+  const [forecast, setForecast] = useState(null)
+  const [forecastModel, setForecastModel] = useState('chronos2')
+  const [forecastBusy, setForecastBusy] = useState(false)
+  const [degradationTimeline, setDegradationTimeline] = useState([])
+
+  usePageHeader(
+    <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <button className="btn secondary" onClick={() => navigate('/machines')}>← Back</button>
+      {machine?.name || 'Machine'}
+    </span>,
+    machine ? <StatusBadge status={machine.status} /> : null
+  )
+
+  const load = async () => {
+    setError(null)
+    setMachine(null)
+    try {
+      // Load the critical machine record first so one slow optional endpoint
+      // can never keep the whole page on the skeleton.
+      const m = await api.get(`/api/machines/${id}`)
+      setMachine(m)
+    } catch (e) {
+      setError(e.message)
+      return
+    }
+
+    const optional = await Promise.allSettled([
+      api.get(`/api/machines/${id}/components`),
+      api.get(`/api/machines/${id}/readings?limit=20`),
+      api.get(`/api/maintenance?machine_id=${id}&limit=50`),
+      api.get(`/api/devices/${id}/status`),
+    ])
+
+    const [componentsResult, readingsResult, maintenanceResult, deviceResult] = optional
+    if (componentsResult.status === 'fulfilled') setComponents(componentsResult.value)
+    if (readingsResult.status === 'fulfilled') setReadings(readingsResult.value)
+    if (maintenanceResult.status === 'fulfilled') setMaintenance(maintenanceResult.value)
+    if (deviceResult.status === 'fulfilled') setDeviceStatus(deviceResult.value)
+    try { setIntelligence(await api.get(`/api/analytics/machines/${id}/intelligence`)) } catch { setIntelligence(null) }
+    try { const d = await api.get(`/api/analytics/machines/${id}/degradation?limit=48`); setDegradationTimeline(d.points || []) } catch { setDegradationTimeline([]) }
+    try {
+      const s = await api.get(`/api/devices/${id}/safety`)
+      const policies = s.policies || []
+      setSafety(s)
+      setSafetyPolicies(policies)
+      const initial = policies.find(p => p.enabled) || policies[0]
+      if (initial) {
+        setSelectedSafetySignal(initial.monitored_reading_type)
+        setSafetyForm({
+          ...initial,
+          warning_low: initial.warning_low ?? '',
+          warning_high: initial.warning_high ?? '',
+          shutdown_low: initial.shutdown_low ?? '',
+          shutdown_high: initial.shutdown_high ?? '',
+          auto_shutdown_enabled: !!initial.auto_shutdown_enabled,
+        })
+      }
+    } catch { setSafety(null); setSafetyPolicies([]) }
+  }
+
+  useEffect(() => {
+    load()
+  }, [id])
+
+  useEffect(() => {
+    if (!machine) return
+    const refresh = window.setInterval(async () => {
+      try { setIntelligence(await api.get(`/api/analytics/machines/${id}/intelligence`)) } catch { /* telemetry may be offline */ }
+    }, 15000)
+    return () => window.clearInterval(refresh)
+  }, [id, machine])
+
+  // Live telemetry is delivered through the tenant-scoped Supabase Realtime
+  // channel established by App.jsx/realtime.js. Do not open a second process-local
+  // backend WebSocket here: serverless instances are not guaranteed to share the
+  // in-memory telemetry fan-out.
+  useEffect(() => {
+    const handleStatus = (event) => {
+      const status = event?.detail
+      setLiveConnected(status === 'connected')
+    }
+    const handleTelemetry = (event) => {
+      const message = event?.detail
+      if (!message || message.type !== 'telemetry' || String(message.machine_id) !== String(id)) return
+      const reading = { value: Number(message.value), unit: message.unit || '', recorded_at: message.recorded_at }
+      setLiveReadings(prev => ({ ...prev, [message.reading_type]: reading }))
+      setLiveHistory(prev => ({ ...prev, [message.reading_type]: [...(prev[message.reading_type] || []), reading.value].slice(-24) }))
+      if (message.safety) setSafetyEvent(message.safety)
+      if (message.degradation) setDegradationTimeline(prev => [...prev, message.degradation].slice(-48))
+      setLiveConnected(true)
+    }
+    window.addEventListener('maintain-ai-realtime-status', handleStatus)
+    window.addEventListener('maintain-ai-telemetry', handleTelemetry)
+    return () => {
+      window.removeEventListener('maintain-ai-realtime-status', handleStatus)
+      window.removeEventListener('maintain-ai-telemetry', handleTelemetry)
+    }
+  }, [id])
+
+  const liveSensors = useMemo(() => ([
+    ['temperature', 'Temperature', '°C'], ['vibration', 'Vibration', 'g'],
+    ['current', 'Current', 'A'], ['load', 'Load', '%'], ['humidity', 'Humidity', '%']
+  ].map(([key, label, fallbackUnit]) => ({ key, label, reading: liveReadings[key], unit: liveReadings[key]?.unit || fallbackUnit, history: liveHistory[key] || [] }))), [liveReadings, liveHistory])
+
+  const addReading = async (e) => {
+    e.preventDefault()
+    await api.post(`/api/machines/${id}/readings`, { ...newReading, value: Number(newReading.value) })
+    setNewReading({ ...newReading, value: '' })
+    clearApiCache(`/api/machines/${id}`)
+    load()
+  }
+
+  const addComponent = async (e) => {
+    e.preventDefault()
+    if (!newComponent.trim()) return
+    await api.post(`/api/machines/${id}/components`, { name: newComponent })
+    setNewComponent('')
+    clearApiCache(`/api/machines/${id}`)
+    load()
+  }
+
+  const runForecast = async () => {
+    setForecastBusy(true)
+    try { setForecast(await api.get('/api/analytics/machines/' + id + '/forecast?reading_type=temperature&model=' + forecastModel + '&horizon=12')) }
+    finally { setForecastBusy(false) }
+  }
+
+  const saveSafety = async (e) => {
+    e.preventDefault()
+    setSafetyBusy(true)
+    setSafetyError(null)
+    try {
+      const type = safetyForm.monitored_reading_type
+      const defaults = safetyDefaults[type]
+      const payload = {
+        enabled: !!safetyForm.enabled,
+        monitored_reading_type: type,
+        unit: defaults?.unit || safetyForm.unit || '',
+        warning_low: safetyForm.warning_low === '' ? null : Number(safetyForm.warning_low),
+        warning_high: safetyForm.warning_high === '' ? null : Number(safetyForm.warning_high),
+        shutdown_low: safetyForm.shutdown_low === '' ? null : Number(safetyForm.shutdown_low),
+        shutdown_high: safetyForm.shutdown_high === '' ? null : Number(safetyForm.shutdown_high),
+        auto_shutdown_enabled: !!safetyForm.auto_shutdown_enabled,
+      }
+      const saved = await api.put('/api/devices/' + id + '/safety', payload)
+      const policies = Array.isArray(saved?.policies) ? saved.policies : []
+      const updated = policies.find(p => p.monitored_reading_type === type)
+      if (!updated) throw new Error('Safety settings were accepted but the saved policy was not returned by the server.')
+      setSafety(saved)
+      setSafetyPolicies(policies)
+      setSelectedSafetySignal(type)
+      setSafetyForm({
+        ...updated,
+        warning_low: updated.warning_low ?? '',
+        warning_high: updated.warning_high ?? '',
+        shutdown_low: updated.shutdown_low ?? '',
+        shutdown_high: updated.shutdown_high ?? '',
+        auto_shutdown_enabled: !!updated.auto_shutdown_enabled,
+      })
+    } catch (err) {
+      setSafetyError(err?.message || 'Could not save safety settings.')
+    } finally {
+      setSafetyBusy(false)
+    }
+  }
+
+  const selectSafetySignal = (type) => {
+    setSelectedSafetySignal(type)
+    setSafetyError(null)
+    const existing = safetyPolicies.find(p => p.monitored_reading_type === type)
+    const d = safetyDefaults[type]
+    setSafetyForm(existing
+      ? {
+          enabled: !!existing.enabled,
+          monitored_reading_type: type,
+          unit: d.unit,
+          warning_low: existing.warning_low ?? '',
+          warning_high: existing.warning_high ?? '',
+          shutdown_low: existing.shutdown_low ?? '',
+          shutdown_high: existing.shutdown_high ?? '',
+          auto_shutdown_enabled: !!existing.auto_shutdown_enabled,
+        }
+      : {
+          enabled: false,
+          monitored_reading_type: type,
+          unit: d.unit,
+          warning_low: d.warningLow,
+          warning_high: d.warningHigh,
+          shutdown_low: d.shutdownLow,
+          shutdown_high: d.shutdownHigh,
+          auto_shutdown_enabled: false,
+        })
+  }
+
+  const testSafetyShutdown = async () => {
+    setSafetyBusy(true)
+    try { await api.post('/api/devices/' + id + '/safety/test-shutdown', {}) } finally { setSafetyBusy(false) }
+  }
+  const enableDevice = async () => {
+    setDeviceBusy(true)
+    setDeviceError(null)
+    try {
+      const result = await api.post(`/api/devices/${id}/enable`, {})
+      if (!result?.device_key) throw new Error('Backend enabled live sensor integration but did not return a device key.')
+      setRevealedKey(result.device_key)
+      setDeviceStatus({ iot_enabled: result.iot_enabled, has_key: result.has_key })
+    } catch (e) {
+      setDeviceError(e?.message || 'Could not enable live sensor integration.')
+    } finally {
+      setDeviceBusy(false)
+    }
+  }
+
+  const openKeyAction = (action) => {
+    setKeyAction(action)
+    setKeyConfirmation('')
+    setDeviceError(null)
+  }
+
+  const closeKeyAction = () => {
+    if (deviceBusy) return
+    setKeyAction(null)
+    setKeyConfirmation('')
+  }
+
+  const confirmKeyAction = async () => {
+    if (keyConfirmation !== 'I UNDERSTAND' || !keyAction) return
+    setDeviceBusy(true)
+    setDeviceError(null)
+    try {
+      const result = await api.post(`/api/devices/${id}/${keyAction === 'view' ? 'key' : keyAction}`, { confirmation: keyConfirmation })
+      if (!result?.device_key && keyAction !== 'disable') throw new Error('The server did not return a device key.')
+      if (keyAction === 'disable') {
+        setDeviceStatus(result)
+        setRevealedKey(null)
+      } else {
+        setDeviceStatus({ iot_enabled: result.iot_enabled, has_key: result.has_key })
+        setRevealedKey(result.device_key)
+      }
+      setKeyAction(null)
+      setKeyConfirmation('')
+    } catch (e) {
+      setDeviceError(e?.message || `Could not ${keyAction} the device key.`)
+    } finally {
+      setDeviceBusy(false)
+    }
+  }
+
+  const disableDevice = () => openKeyAction('disable')
+
+  if (error) return <ErrorState message={error} />
+  if (!machine) return <Loading />
+
+  return (
+    <>
+      <div className="stat-grid">
+        <div className="stat-tile"><div className="stat-label">HEALTH SCORE</div><div className={`stat-value ${machine.status}`}>{machine.health_score}/100</div></div>
+        <div className="stat-tile"><div className="stat-label">OPERATING HOURS</div><div className="stat-value">{machine.operating_hours}</div></div>
+        <div className="stat-tile"><div className="stat-label">CRITICALITY</div><div className="stat-value">{machine.criticality}</div></div>
+        <div className="stat-tile"><div className="stat-label">NEXT MAINTENANCE</div><div className="stat-value" style={{ fontSize: 15 }}>{machine.next_maintenance_date ? formatDate(machine.next_maintenance_date) : '—'}</div></div>
+      </div>
+
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <div>
+            <span className="panel-title">Live Machine Telemetry</span>
+            <div style={{ marginTop: 4, color: 'var(--text-faint)', fontSize: 11 }}>Real-time sensor stream from the connected machine device</div>
+          </div>
+          <span className={'badge ' + (liveConnected ? 'healthy' : 'warning')}>
+            <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: 'currentColor', marginRight: 5 }} />
+            {liveConnected ? 'Live' : 'Reconnecting'}
+          </span>
+        </div>
+        <div className="panel-body">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 10 }}>
+            {liveSensors.map(sensor => <LiveSensorCard key={sensor.key} {...sensor} />)}
+          </div>
+          <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, color: 'var(--text-faint)', fontSize: 11 }}>
+            <span>{Object.keys(liveReadings).length ? 'Telemetry is flowing into MAINTAIN AI' : 'Waiting for device telemetry…'}</span>
+            <span>Updates automatically</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <span className="panel-title">Live Sensor Integration (Optional)</span>
+          {deviceStatus?.iot_enabled && <span className="badge healthy">Enabled</span>}
+        </div>
+        <div className="panel-body">
+          <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 12 }}>
+            Manual entry above always works, with or without this. Enabling this lets an ESP32
+            (or any device) push readings directly for this machine over the network — see
+            <code style={{ margin: '0 4px' }}>firmware/esp32_example.ino</code>
+            for working example code. Off by default; nothing changes unless you turn it on.
+          </p>
+
+          {deviceError && <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: 'rgba(255,70,70,.10)', color: 'var(--critical)', fontSize: 12 }}>{deviceError}</div>}
+
+          {!canEdit && <div style={{ marginBottom: 12, color: 'var(--text-faint)', fontSize: 12 }}>Live sensor integration is managed by administrators.</div>}
+
+          {revealedKey && (
+            <div style={{ padding: 12, background: 'var(--panel-raised)', borderRadius: 8, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, color: 'var(--warning)', marginBottom: 6 }}>
+                Device key revealed. Keep it private; any device holding this key can authenticate telemetry for this machine.
+              </div>
+              <div className="mono" style={{ fontSize: 13, wordBreak: 'break-all' }}>{revealedKey}</div>
+            </div>
+          )}
+
+          {keyAction && (
+            <div role="dialog" aria-modal="true" style={{ position:'fixed', inset:0, zIndex:1000, background:'rgba(0,0,0,.68)', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+              <div style={{ width:'min(480px,100%)', background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:20, boxShadow:'0 20px 60px rgba(0,0,0,.45)' }}>
+                <div style={{ fontSize:16, fontWeight:700, marginBottom:8 }}>
+                  {keyAction === 'view' ? 'Reveal device key' : keyAction === 'regenerate' ? 'Regenerate device key' : 'Disable live sensor integration'}
+                </div>
+                <div style={{ color:'var(--text-dim)', fontSize:13, lineHeight:1.55, marginBottom:14 }}>
+                  {keyAction === 'view'
+                    ? 'The device key is a credential. Confirm explicitly before revealing it again.'
+                    : keyAction === 'regenerate'
+                      ? 'The current key will stop working immediately. Any firmware or gateway using it must be updated with the new key.'
+                      : 'Telemetry using the current device key will stop being accepted for this machine.'}
+                </div>
+                <label style={{ display:'block', fontSize:12, color:'var(--text-dim)', marginBottom:7 }}>
+                  Type <strong>I UNDERSTAND</strong> to continue.
+                </label>
+                <input autoFocus value={keyConfirmation} onChange={e=>setKeyConfirmation(e.target.value)}
+                  placeholder="I UNDERSTAND" autoComplete="off"
+                  style={{ width:'100%', boxSizing:'border-box', marginBottom:14 }} />
+                <div style={{ display:'flex', justifyContent:'flex-end', gap:8 }}>
+                  <button className="btn secondary" type="button" onClick={closeKeyAction} disabled={deviceBusy}>Cancel</button>
+                  <button className={keyAction === 'disable' ? 'btn danger' : 'btn'} type="button"
+                    onClick={confirmKeyAction} disabled={deviceBusy || keyConfirmation !== 'I UNDERSTAND'}>
+                    {deviceBusy ? 'Working…' : keyAction === 'view' ? 'Reveal Key' : keyAction === 'regenerate' ? 'Regenerate Key' : 'Disable'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {canEdit && deviceStatus?.iot_enabled ? (
+            <div className="chip-row">
+              <button className="btn secondary" onClick={() => openKeyAction('regenerate')} disabled={deviceBusy}>
+                {deviceBusy ? 'Working…' : 'Regenerate Key'}
+              </button>
+              <button className="btn secondary" onClick={() => openKeyAction('view')} disabled={deviceBusy}>
+                View Key
+              </button>
+              <button className="btn danger" onClick={() => openKeyAction('disable')} disabled={deviceBusy}>
+                {deviceBusy ? 'Working…' : 'Disable'}
+              </button>
+            </div>
+          ) : canEdit ? (
+            <button className="btn" onClick={enableDevice} disabled={deviceBusy}>
+              {deviceBusy ? 'Working…' : 'Enable Live Sensor Integration'}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <span className="panel-title">Pretrained Signal Forecast</span>
+          <span className="badge neutral">Zero-shot</span>
+        </div>
+        <div className="panel-body">
+          <div className="chip-row">
+            <select value={forecastModel} onChange={e=>setForecastModel(e.target.value)}>
+              <option value="chronos2">Chronos-2</option>
+              <option value="timer">Timer</option>
+            </select>
+            <button className="btn secondary" onClick={runForecast} disabled={forecastBusy}>{forecastBusy ? 'Forecasting…' : 'Forecast Temperature'}</button>
+          </div>
+          {forecast && <div style={{ marginTop: 12 }}>
+            {forecast.available ? (
+              <div className="mono" style={{ display:'grid', gridTemplateColumns:'repeat(6,minmax(0,1fr))', gap:8 }}>
+                {forecast.forecast.slice(0,12).map((v,i)=><div key={i} style={{ padding:8, background:'var(--panel-raised)', borderRadius:6 }}>{Number(v).toFixed(2)}<div style={{fontSize:10,color:'var(--text-faint)'}}>t+{i+1}</div></div>)}
+              </div>
+            ) : <div style={{color:'var(--text-faint)',fontSize:12}}>{forecast.reason || 'Forecast unavailable.'}</div>}
+          </div>}
+          <div style={{ marginTop: 9, color:'var(--text-faint)', fontSize:11 }}>Forecasts estimate future sensor values. They are evidence for degradation analysis, not failure probabilities.</div>
+        </div>
+      </div>
+
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <span className="panel-title">Degradation Timeline</span>
+          <span className="badge neutral">Online evidence · not failure probability</span>
+        </div>
+        <div className="panel-body">
+          {degradationTimeline.length ? (
+            <>
+              <div style={{display:'flex',alignItems:'end',gap:3,height:120}}>
+                {degradationTimeline.slice(-48).map((p,i) => (
+                  <div key={p.recorded_at + i} title={`${p.recorded_at} · score ${Number(p.degradation_score).toFixed(3)}`} style={{flex:1,minWidth:2,height:`${8 + Number(p.degradation_score)*100}px`,maxHeight:110,borderRadius:2,background:'var(--accent)',opacity:0.25 + Number(p.degradation_score)*0.75}} />
+                ))}
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',marginTop:8,color:'var(--text-faint)',fontSize:11}}>
+                <span>{formatDateTime(degradationTimeline[0].recorded_at)}</span>
+                <span>Latest: {Number(degradationTimeline[degradationTimeline.length-1].degradation_score).toFixed(3)}</span>
+              </div>
+              <div style={{marginTop:10,color:'var(--text-faint)',fontSize:11}}>
+                Evidence combines live sensor anomaly deviation and multi-sensor agreement. It is intentionally not presented as a calibrated failure risk.
+              </div>
+            </>
+          ) : <div className="empty-state">Collecting telemetry for the first degradation points…</div>}
+        </div>
+      </div>
+
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <span className="panel-title">Machine Safety & Auto-Shutdown</span>
+          <span className={'badge ' + (safetyPolicies.some(p => p.enabled) ? 'healthy' : 'neutral')}>{safetyPolicies.some(p => p.enabled) ? 'Monitoring' : 'Off'}</span>
+        </div>
+        <div className="panel-body">
+          <p style={{color:'var(--text-dim)',fontSize:13,marginBottom:14}}>
+            Configure warning and hard-stop limits for each machine signal. Units are automatic and each signal can be armed independently.
+          </p>
+          {canEdit && <form onSubmit={saveSafety}>
+            <div className="grid-2" style={{gap:10}}>
+              {Object.entries(safetyDefaults).map(([type,d]) => {
+                const p=safetyPolicies.find(x=>x.monitored_reading_type===type)
+                const active=!!p?.enabled
+                return <button type="button" key={type} onClick={()=>selectSafetySignal(type)}
+                  style={{textAlign:'left',padding:14,borderRadius:10,border:'1px solid '+(selectedSafetySignal===type?'var(--accent)':'var(--border)'),background:'var(--panel-raised)',color:'inherit',cursor:'pointer'}}>
+                  <div style={{display:'flex',justifyContent:'space-between',gap:8}}>
+                    <strong>{d.label}</strong><span>{active?'✓ Armed':'○ Off'}</span>
+                  </div>
+                  <div style={{fontSize:11,color:'var(--text-faint)',marginTop:5}}>
+                    Warning {p?.warning_high ?? d.warningHigh} {d.unit} · Shutdown {p?.shutdown_high ?? d.shutdownHigh} {d.unit}
+                  </div>
+                </button>
+              })}
+            </div>
+
+            <div style={{marginTop:14,padding:14,border:'1px solid var(--border)',borderRadius:10}}>
+              <div className="chip-row" style={{marginBottom:10}}>
+                <label>
+                  <input type="checkbox" checked={!!safetyForm.enabled}
+                    onChange={e=>setSafetyForm({...safetyForm,enabled:e.target.checked})}/>
+                  {' '}Enable {safetyDefaults[safetyForm.monitored_reading_type]?.label || 'signal'} monitoring
+                </label>
+                <span className="badge neutral">
+                  Unit: {safetyDefaults[safetyForm.monitored_reading_type]?.unit || safetyForm.unit}
+                </span>
+              </div>
+              <div className="grid-2">
+                <label>Warning low <input type="number" step="any" value={safetyForm.warning_low} onChange={e=>setSafetyForm({...safetyForm,warning_low:e.target.value})}/></label>
+                <label>Warning high <input type="number" step="any" value={safetyForm.warning_high} onChange={e=>setSafetyForm({...safetyForm,warning_high:e.target.value})}/></label>
+                <label>Shutdown low <input type="number" step="any" value={safetyForm.shutdown_low} onChange={e=>setSafetyForm({...safetyForm,shutdown_low:e.target.value})}/></label>
+                <label>Shutdown high <input type="number" step="any" value={safetyForm.shutdown_high} onChange={e=>setSafetyForm({...safetyForm,shutdown_high:e.target.value})}/></label>
+              </div>
+            </div>
+
+            <div className="chip-row" style={{marginTop:12}}>
+              <label>
+                <input type="checkbox" checked={!!safetyForm.auto_shutdown_enabled}
+                  onChange={e=>setSafetyForm({...safetyForm,auto_shutdown_enabled:e.target.checked})}/>
+                {' '}Automatic shutdown
+              </label>
+              <button className="btn" type="submit" disabled={safetyBusy}>
+                {safetyBusy?'Saving…':'Save '+(safetyDefaults[safetyForm.monitored_reading_type]?.label || 'Safety')+' Safety'}
+              </button>
+              <button className="btn secondary" type="button" onClick={testSafetyShutdown}
+                disabled={safetyBusy || !deviceStatus?.iot_enabled}>
+                Test IoT Shutdown Signal
+              </button>
+            </div>
+          </form>}
+
+          {safetyError && <div style={{marginTop:10,padding:10,borderRadius:8,background:'rgba(255,70,70,.10)',color:'var(--critical)',fontSize:12}}>
+            <strong>Could not save safety settings.</strong> {safetyError}
+          </div>}
+
+          {!canEdit && <div style={{color:'var(--text-faint)',fontSize:12}}>Safety settings are managed by administrators.</div>}
+
+          <div style={{marginTop:12,padding:11,borderRadius:8,background:deviceStatus?.iot_enabled?'rgba(50,210,160,.08)':'rgba(255,180,0,.08)',fontSize:12}}>
+            <strong>{deviceStatus?.iot_enabled?'Device integration enabled':'Device integration not enabled'}</strong>
+            {' · '}The simulator/ESP32 safety channel must remain connected for automatic shutdown commands.
+          </div>
+
+          {safetyEvent && <div style={{marginTop:10,padding:12,borderRadius:8,background:safetyEvent.shutdown_requested?'rgba(255,70,70,.10)':'rgba(255,180,0,.10)',color:safetyEvent.shutdown_requested?'var(--critical)':'var(--warning)',fontSize:12}}>
+            <strong>{safetyEvent.shutdown_requested?'SAFETY SHUTDOWN':'SAFETY WARNING'}</strong>
+            <div style={{marginTop:4}}>{safetyEvent.message}</div>
+            {safetyEvent.shutdown_requested && <div style={{marginTop:4}}>Command sent to device safety channel.</div>}
+          </div>}
+
+          <div style={{marginTop:10,color:'var(--text-faint)',fontSize:11}}>
+            For real equipment, use a properly rated relay/contactor and independent safety interlock. The cloud command is supervisory, not the sole protective device.
+          </div>
+        </div>
+      </div>
+      <div className="panel section-gap">
+        <div className="panel-header">
+          <span className="panel-title">Pretrained AI Signal</span>
+          <span className={'badge ' + (intelligence?.pretrained_anomaly?.available ? 'healthy' : 'warning')}>
+            {intelligence?.pretrained_anomaly?.available ? 'Zero-shot' : 'Not ready'}
+          </span>
+        </div>
+        <div className="panel-body">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
+            <div>
+              <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>Time-series anomaly model</div>
+              <div className="mono" style={{ fontSize: 22, fontWeight: 700, marginTop: 4 }}>
+                {intelligence?.pretrained_anomaly?.available ? Number(intelligence.pretrained_anomaly.anomaly_score).toFixed(3) : '—'}
+              </div>
+            </div>
+            <div style={{ maxWidth: 520, color: 'var(--text-faint)', fontSize: 12 }}>
+              {intelligence?.pretrained_anomaly?.available ? 'Pretrained zero-shot anomaly score from live telemetry. This is not a calibrated failure probability.' : (intelligence?.pretrained_anomaly?.reason || 'Waiting for pretrained model / telemetry.')}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <MachinePerformanceCard machineId={id} canEdit={canEdit} />
+
+      <div className="grid-2 section-gap">
+        <div className="panel">
+          <div className="panel-header"><span className="panel-title">Machine Info</span></div>
+          <div className="panel-body">
+            <InfoRow label="Machine code" value={machine.machine_code} mono />
+            <InfoRow label="Category" value={machine.category} />
+            <InfoRow label="Manufacturer" value={machine.manufacturer} />
+            <InfoRow label="Model" value={machine.model_number} />
+            <InfoRow label="Location" value={machine.location} />
+            <InfoRow label="Department" value={machine.department} />
+            <InfoRow label="Maintenance interval" value={`${machine.maintenance_interval_hours} hrs`} />
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-header"><span className="panel-title">Components</span></div>
+          <div className="panel-body">
+            {components.map((c) => <div key={c.id} style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}>{c.name}</div>)}
+            {components.length === 0 && <div className="empty-state" style={{ padding: '8px 0' }}>No components logged yet.</div>}
+            {canEdit && <form onSubmit={addComponent} style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <input value={newComponent} onChange={(e) => setNewComponent(e.target.value)} placeholder="e.g. Drive-end bearing" />
+              <button className="btn secondary" type="submit">Add</button>
+            </form>}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <div className="panel">
+          <div className="panel-header"><span className="panel-title">Sensor / Manual Readings</span></div>
+          <div className="panel-body">
+            {canEdit && <form onSubmit={addReading} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <select value={newReading.reading_type} onChange={(e) => setNewReading({ ...newReading, reading_type: e.target.value })}>
+                <option value="temperature">Temperature</option>
+                <option value="vibration">Vibration</option>
+                <option value="current">Current</option>
+                <option value="load">Load</option>
+              </select>
+              <input type="number" step="any" required placeholder="value" value={newReading.value} onChange={(e) => setNewReading({ ...newReading, value: e.target.value })} />
+              <input style={{ width: 70 }} value={newReading.unit} onChange={(e) => setNewReading({ ...newReading, unit: e.target.value })} />
+              <button className="btn secondary" type="submit">Log</button>
+            </form>}
+            <table>
+              <thead><tr><th>Type</th><th>Value</th><th>Recorded</th></tr></thead>
+              <tbody>
+                {readings.slice(0, 8).map((r) => (
+                  <tr key={r.id}><td>{r.reading_type}</td><td className="mono">{r.value} {r.unit}</td><td className="mono">{formatDateTime(r.recorded_at)}</td></tr>
+                ))}
+                {readings.length === 0 && <tr><td colSpan={3} className="empty-state">No readings logged yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-header"><span className="panel-title">Maintenance History</span></div>
+          <table>
+            <thead><tr><th>Type</th><th>Status</th><th>Scheduled</th></tr></thead>
+            <tbody>
+              {maintenance.map((r) => (
+                <tr key={r.id}><td>{r.type}</td><td><StatusBadge status={r.status === 'completed' ? 'healthy' : r.status === 'overdue' ? 'critical' : 'warning'} /></td><td className="mono">{r.scheduled_date ? formatDate(r.scheduled_date) : '—'}</td></tr>
+              ))}
+              {maintenance.length === 0 && <tr><td colSpan={3} className="empty-state">No maintenance history yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  )
+}
+
+function LiveSensorCard({ label, reading, unit, history }) {
+  const latest = reading?.value
+  const previous = history.length > 1 ? history[history.length - 2] : null
+  const delta = latest != null && previous != null ? latest - previous : null
+  const direction = delta == null || Math.abs(delta) < 0.000001 ? '→' : delta > 0 ? '↑' : '↓'
+  return (
+    <div style={{ padding: 12, borderRadius: 10, background: 'var(--panel-raised)', border: '1px solid var(--border)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 7 }}><span style={{ color: 'var(--text-dim)', fontSize: 12 }}>{label}</span><span style={{ color: 'var(--accent)' }}>{direction}</span></div>
+      <div className="mono" style={{ fontSize: 20, fontWeight: 700 }}>{latest == null || Number.isNaN(latest) ? '—' : latest + ' ' + unit}</div>
+      <div style={{ height: 22, display: 'flex', alignItems: 'end', gap: 2, marginTop: 8 }}>
+        {history.length ? history.slice(-16).map((value, index, arr) => { const min=Math.min(...arr), max=Math.max(...arr), range=max-min||1; return <span key={index} style={{ flex: 1, height: (5 + ((value-min)/range)*17) + 'px', borderRadius: 2, background: 'var(--accent)', opacity: 0.35 + index/arr.length*0.65 }} /> }) : <span style={{ color: 'var(--text-faint)', fontSize: 10 }}>No live samples yet</span>}
+      </div>
+    </div>
+  )
+}
+
+function InfoRow({ label, value, mono }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+      <span style={{ color: 'var(--text-faint)' }}>{label}</span>
+      <span className={mono ? 'mono' : ''}>{value || '—'}</span>
+    </div>
+  )
+}
