@@ -112,10 +112,15 @@ def main() -> None:
                 assert machines_code == 200, machines
                 assert isinstance(machines, list), machines
 
+                telemetry_code, telemetry = get_json(base, "/api/devices/telemetry/latest?ts=1")
+                assert telemetry_code == 200, telemetry
+                assert isinstance(telemetry.get("machines"), list), telemetry
+
                 assert database.is_file(), f"SQLite file was not created: {database}"
                 print(
                     "Local backend smoke test passed: auth mode, core routers, "
-                    f"local administrator, and machine registry ({len(machines)} machines)."
+                    f"local administrator, machine registry ({len(machines)} machines), "
+                    f"and local telemetry poll ({len(telemetry['machines'])} signals)."
                 )
             except Exception:
                 try:

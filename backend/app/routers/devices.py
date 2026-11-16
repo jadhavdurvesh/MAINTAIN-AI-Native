@@ -503,6 +503,51 @@ async def telemetry_stream_websocket(websocket: WebSocket):
         telemetry_stream.disconnect(websocket, organization_id if organization_id is not None else None)
         db.close()
 
+@router.get("/telemetry/latest")
+def latest_local_telemetry(
+    current: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the latest persisted sample for each machine/signal in this local workspace.
+
+    The native desktop polls this endpoint instead of depending on Supabase Realtime.
+    Scope is still enforced by organization and technician assignment.
+    """
+    query = (
+        db.query(models.SensorReading, models.Machine)
+        .join(models.Machine, models.Machine.id == models.SensorReading.machine_id)
+        .filter(
+            models.Machine.organization_id == current.organization_id,
+            models.Machine.archived.is_(False),
+        )
+    )
+    if current.id is not None and current.role == models.UserRole.technician.value:
+        query = query.join(
+            models.UserMachineAssignment,
+            models.UserMachineAssignment.machine_id == models.Machine.id,
+        ).filter(models.UserMachineAssignment.user_id == current.id)
+
+    rows = query.order_by(models.SensorReading.id.desc()).limit(2000).all()
+    latest_by_signal = {}
+    for reading, machine in rows:
+        key = (machine.id, reading.reading_type)
+        if key in latest_by_signal:
+            continue
+        latest_by_signal[key] = {
+            "type": "telemetry",
+            "machine_id": machine.id,
+            "machine": machine.name,
+            "reading_id": reading.id,
+            "reading_type": reading.reading_type,
+            "value": reading.value,
+            "unit": reading.unit,
+            "recorded_at": reading.recorded_at,
+            "source": reading.source,
+        }
+
+    return {"machines": list(latest_by_signal.values())}
+
+
 @router.get("/{machine_id}/status", response_model=DeviceStatusOut)
 def device_status(machine_id: int, current: CurrentUser = Depends(get_current_user), db: Session = Depends(get_db)):
     machine = _get_scoped_machine(db, machine_id, current)

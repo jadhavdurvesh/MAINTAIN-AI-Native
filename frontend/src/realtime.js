@@ -58,6 +58,16 @@ export function useTelemetryStream() {
   useEffect(() => {
     let stopped = false
 
+    // The Native desktop polls its local SQLite-backed API rather than using
+    // Supabase Realtime. App.jsx publishes the freshness state from that poll.
+    const handleLocalTelemetryStatus = (event) => {
+      const active = Boolean(event?.detail?.active)
+      const next = active ? 'connected' : 'offline'
+      setStatus(next)
+      window.dispatchEvent(new CustomEvent('maintain-ai-realtime-status', { detail: next }))
+    }
+    window.addEventListener('maintain:telemetry-status', handleLocalTelemetryStatus)
+
     const publishStatus = () => {
       const connected = connectedSourcesRef.current.size > 0
       const next = connected ? 'connected' : (getOrganizationId() ? 'reconnecting' : 'waiting-for-org')
@@ -280,6 +290,7 @@ export function useTelemetryStream() {
       stopped = true
       window.removeEventListener('maintain-ai-org-context', handleContext)
       window.removeEventListener('maintain-ai-auth-context', handleContext)
+      window.removeEventListener('maintain:telemetry-status', handleLocalTelemetryStatus)
       cleanupTimers()
       closeBackend()
       closeSupabase()
