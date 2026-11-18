@@ -319,3 +319,101 @@ async fn run_windows(database: PathBuf) -> Result<()> {
         });
     }
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn telemetry_ingest_runs_anomaly_detection_and_persists_event() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "maintain-native-engine-{}-{}",
+            std::process::id(),
+            unique
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let database = directory.join("engine-test.sqlite3");
+
+        let analytics = LOCAL_ANALYTICS.get_or_init(|| Mutex::new(LocalAnalytics::default()));
+        *analytics.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            LocalAnalytics::default();
+
+        let created = handle_request(
+            EngineRequest::CreateMachine {
+                name: "Test pump".into(),
+                asset_tag: format!("TEST-{}", unique),
+                machine_type: "Centrifugal pump".into(),
+                location: None,
+            },
+            &database,
+        );
+        let machine = match created {
+            EngineResponse::MachineCreated { machine } => machine,
+            other => panic!("expected machine to be created, got {other:?}"),
+        };
+
+        for _ in 0..12 {
+            let response = handle_request(
+                EngineRequest::RecordTelemetry {
+                    machine_id: machine.id.to_string(),
+                    metric: "temperature".into(),
+                    value: 40.0,
+                    unit: "°C".into(),
+                    source: "sensor".into(),
+                    observed_at: None,
+                },
+                &database,
+            );
+            match response {
+                EngineResponse::TelemetryRecorded { anomaly, .. } => {
+                    assert!(anomaly.is_none(), "stable readings must not trigger an anomaly");
+                }
+                other => panic!("expected telemetry to be recorded, got {other:?}"),
+            }
+        }
+
+        let spike = handle_request(
+            EngineRequest::RecordTelemetry {
+                machine_id: machine.id.to_string(),
+                metric: "temperature".into(),
+                value: 100.0,
+                unit: "°C".into(),
+                source: "sensor".into(),
+                observed_at: None,
+            },
+            &database,
+        );
+        match spike {
+            EngineResponse::TelemetryRecorded { anomaly, .. } => {
+                let anomaly = anomaly.expect("temperature spike should trigger an anomaly");
+                assert_eq!(anomaly.metric, "temperature");
+                assert!(anomaly.score >= 3.0);
+            }
+            other => panic!("expected spike telemetry to be recorded, got {other:?}"),
+        }
+
+        let listed = handle_request(
+            EngineRequest::ListAnomalies {
+                machine_id: machine.id.to_string(),
+                limit: 20,
+            },
+            &database,
+        );
+        match listed {
+            EngineResponse::AnomaliesListed { anomalies } => {
+                assert_eq!(anomalies.len(), 1);
+                assert_eq!(anomalies[0].metric, "temperature");
+            }
+            other => panic!("expected anomaly history, got {other:?}"),
+        }
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
