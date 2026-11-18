@@ -8,6 +8,7 @@ license.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
 maintain-app-core = { path = "../app-core" }
+maintain-analytics = { path = "../analytics" }
 maintain-persistence = { path = "../persistence" }
 maintain-protocol = { path = "../protocol" }
 serde_json.workspace = true
