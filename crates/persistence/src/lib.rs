@@ -282,7 +282,7 @@ pub fn list_telemetry(
 }
 
 pub fn record_anomaly(database: &Connection, anomaly: &AnomalySignal) -> Result<()> {
-    let severity = match anomaly.severity {
+    let severity = match &anomaly.severity {
         Severity::Info => "info",
         Severity::Warning => "warning",
         Severity::Critical => "critical",
@@ -383,7 +383,7 @@ mod tests {
     fn creates_initial_schema_and_telemetry_migration() {
         let database = test_database();
         let versions: i64 = database.query_row(
-            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2)",
+            "SELECT COUNT(*) FROM schema_migrations WHERE version IN (1, 2, 3)",
             [],
             |row| row.get(0),
         ).unwrap();
