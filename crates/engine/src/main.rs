@@ -169,7 +169,7 @@ fn handle_request(request: EngineRequest, database: &Path) -> EngineResponse {
                         metric: record.metric.clone(),
                         value: record.value,
                         unit: record.unit.clone(),
-                        observed_at: record.observed_at.clone(),
+                        observed_at: record.observed_at,
                     };
                     let anomaly = {
                         let state = LOCAL_ANALYTICS
