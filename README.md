@@ -8,11 +8,12 @@ This is an independent repository for the native Windows/Linux application. The 
 
 - **JavaFX** owns the primary desktop window and native machine-registry interface.
 - **Rust engine** owns local machine-registry commands and the native SQLite store.
-- **Versioned IPC** uses a Windows named pipe or a Unix-domain socket.
+- **Versioned IPC** uses a Windows named pipe or a Unix-domain socket for machine and telemetry operations.
+- **Native analytics** runs the adaptive per-machine/per-signal detector in Rust, stores anomaly events, and rebuilds its warm-up baseline from local telemetry history at engine startup.
 - **SQLite** stores native machine records and audit events in the user's OS application-data directory.
 - **Local device/analytics crates** provide the foundation for the next Rust service migrations.
 
-The first native vertical slice supports listing and registering machines. Telemetry ingestion, maintenance, work orders, faults, alerts, reports, AI services, user management and other workflows are still being ported; they are not yet native Rust/Java features.
+The current native slices support machine listing/registration, manual telemetry capture, signal-filtered history, trend charts and persisted anomaly events. Rust owns the telemetry and anomaly persistence, while JavaFX presents the native workflows. Live serial/MQTT/Modbus ingestion, sensor configuration, maintenance, work orders, faults, alerts, reports, AI services and user management are still being ported.
 
 ## Temporary compatibility workspace
 
