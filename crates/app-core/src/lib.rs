@@ -57,6 +57,15 @@ pub struct TelemetrySample {
     pub observed_at: DateTime<Utc>,
 }
 
+/// A typed frame emitted by a local sensor adapter.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelemetryFrame {
+    pub metric: String,
+    pub value: f64,
+    pub unit: String,
+    pub observed_at: Option<DateTime<Utc>>,
+}
+
 /// A telemetry sample returned from the persistent native history store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TelemetryRecord {
