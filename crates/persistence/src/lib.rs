@@ -1,7 +1,7 @@
 //! SQLite bootstrap, migrations, machine registry and telemetry repository.
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use maintain_app_core::{Machine, MachineStatus, TelemetryRecord};
+use maintain_app_core::{AnomalySignal, Machine, MachineStatus, Severity, TelemetryRecord};
 use rusqlite::{params, Connection};
 use std::path::Path;
 use uuid::Uuid;
@@ -48,6 +48,19 @@ pub fn migrate(database: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_telemetry_machine_metric_time
             ON telemetry_samples(machine_id, metric, observed_at);
 
+        CREATE TABLE IF NOT EXISTS anomaly_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            machine_id TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+            metric TEXT NOT NULL,
+            score REAL NOT NULL,
+            severity TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            observed_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_anomaly_machine_time
+            ON anomaly_events(machine_id, observed_at);
+
         CREATE TABLE IF NOT EXISTS audit_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             actor TEXT NOT NULL,
@@ -79,6 +92,10 @@ pub fn migrate(database: &Connection) -> Result<()> {
     }
     database.execute(
         "INSERT OR IGNORE INTO schema_migrations(version) VALUES (2)",
+        [],
+    )?;
+    database.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version) VALUES (3)",
         [],
     )?;
     Ok(())
@@ -264,6 +281,89 @@ pub fn list_telemetry(
     Ok(records)
 }
 
+pub fn record_anomaly(database: &Connection, anomaly: &AnomalySignal) -> Result<()> {
+    let severity = match anomaly.severity {
+        Severity::Info => "info",
+        Severity::Warning => "warning",
+        Severity::Critical => "critical",
+    };
+    let machine_id = anomaly.machine_id.to_string();
+    let observed_at = anomaly.observed_at.to_rfc3339();
+    database.execute(
+        "INSERT INTO anomaly_events (machine_id, metric, score, severity, explanation, observed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            machine_id,
+            anomaly.metric,
+            anomaly.score,
+            severity,
+            anomaly.explanation,
+            observed_at,
+        ],
+    )?;
+    database.execute(
+        "INSERT INTO audit_events (actor, action, entity_type, entity_id, details_json)
+         VALUES ('local-analytics', 'telemetry.anomaly_detected', 'machine', ?1, ?2)",
+        params![
+            anomaly.machine_id.to_string(),
+            serde_json::json!({
+                "metric": anomaly.metric,
+                "score": anomaly.score,
+                "severity": severity,
+                "explanation": anomaly.explanation,
+            }).to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_anomalies(
+    database: &Connection,
+    machine_id: &str,
+    limit: u32,
+) -> Result<Vec<AnomalySignal>> {
+    let machine_id = Uuid::parse_str(machine_id).context("invalid machine ID")?;
+    let limit = limit.clamp(1, 200);
+    let mut statement = database.prepare(
+        "SELECT machine_id, metric, score, severity, explanation, observed_at
+         FROM anomaly_events
+         WHERE machine_id = ?1
+         ORDER BY observed_at DESC, id DESC
+         LIMIT ?2"
+    )?;
+    let rows = statement.query_map(params![machine_id.to_string(), limit], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+        ))
+    })?;
+    let mut anomalies = Vec::new();
+    for row in rows {
+        let (machine_id, metric, score, severity, explanation, observed_at) = row?;
+        let severity = match severity.as_str() {
+            "critical" => Severity::Critical,
+            "warning" => Severity::Warning,
+            _ => Severity::Info,
+        };
+        anomalies.push(AnomalySignal {
+            machine_id: Uuid::parse_str(&machine_id)
+                .context("invalid machine UUID in anomaly store")?,
+            metric,
+            score,
+            severity,
+            explanation,
+            observed_at: DateTime::parse_from_rfc3339(&observed_at)
+                .context("invalid anomaly timestamp in local database")?
+                .with_timezone(&Utc),
+        });
+    }
+    Ok(anomalies)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +476,28 @@ mod tests {
         assert_eq!(records[0].value, 42.5);
         assert_eq!(records[0].source, "manual");
         assert_eq!(records[1].value, 38.5);
+    }
+
+    #[test]
+    fn persists_and_lists_anomaly_events() {
+        let database = test_database();
+        let machine = test_machine();
+        insert_machine(&database, &machine).unwrap();
+        let anomaly = AnomalySignal {
+            machine_id: machine.id,
+            metric: "temperature".into(),
+            score: 8.2,
+            severity: Severity::Critical,
+            explanation: "temperature is outside its learned baseline".into(),
+            observed_at: DateTime::parse_from_rfc3339("2026-11-18T08:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+        };
+        record_anomaly(&database, &anomaly).unwrap();
+        let anomalies = list_anomalies(&database, &machine.id.to_string(), 20).unwrap();
+        assert_eq!(anomalies.len(), 1);
+        assert_eq!(anomalies[0].severity, Severity::Critical);
+        assert_eq!(anomalies[0].score, 8.2);
     }
 
     #[test]
