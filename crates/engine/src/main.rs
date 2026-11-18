@@ -18,8 +18,20 @@ async fn main() -> Result<()> {
     let data = data_dir()?;
     std::fs::create_dir_all(&data)?;
     let database = data.join("maintain-native.sqlite3");
-    maintain_persistence::open_database(&database)
+    let connection = maintain_persistence::open_database(&database)
         .with_context(|| format!("failed to initialize {}", database.display()))?;
+    let seed_history = maintain_persistence::recent_telemetry_for_analytics(&connection, 200)
+        .context("failed to load recent telemetry for anomaly baseline warm-up")?;
+    let mut analytics = LocalAnalytics::default();
+    for sample in &seed_history {
+        let _ = analytics.inspect(sample);
+    }
+    let _ = LOCAL_ANALYTICS.set(Mutex::new(analytics));
+    info!(
+        samples = seed_history.len(),
+        "adaptive anomaly detector restored from local telemetry history"
+    );
+    drop(connection);
 
     #[cfg(unix)]
     run_unix(data.join("engine.sock"), database).await?;
