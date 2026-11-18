@@ -1,5 +1,5 @@
 //! Versioned local IPC contract shared by the desktop and Rust engine.
-use maintain_app_core::{Machine, TelemetryRecord};
+use maintain_app_core::{AnomalySignal, Machine, TelemetryRecord};
 use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -29,6 +29,10 @@ pub enum EngineRequest {
         metric: Option<String>,
         limit: u32,
     },
+    ListAnomalies {
+        machine_id: String,
+        limit: u32,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,8 +42,12 @@ pub enum EngineResponse {
     SystemStatus { ready: bool, database: String },
     MachinesListed { machines: Vec<Machine> },
     MachineCreated { machine: Machine },
-    TelemetryRecorded { record: TelemetryRecord },
+    TelemetryRecorded {
+        record: TelemetryRecord,
+        anomaly: Option<AnomalySignal>,
+    },
     TelemetryListed { records: Vec<TelemetryRecord> },
+    AnomaliesListed { anomalies: Vec<AnomalySignal> },
     Error { code: String, message: String },
 }
 
