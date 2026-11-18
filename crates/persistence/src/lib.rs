@@ -1,7 +1,7 @@
 //! SQLite bootstrap, migrations, machine registry and telemetry repository.
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
-use maintain_app_core::{AnomalySignal, Machine, MachineStatus, Severity, TelemetryRecord};
+use maintain_app_core::{AnomalySignal, Machine, MachineStatus, Severity, TelemetryRecord, TelemetrySample};
 use rusqlite::{params, Connection};
 use std::path::Path;
 use uuid::Uuid;
@@ -281,6 +281,51 @@ pub fn list_telemetry(
     Ok(records)
 }
 
+/// Load recent per-machine/per-signal history in chronological order for detector warm-up.
+pub fn recent_telemetry_for_analytics(
+    database: &Connection,
+    per_signal_limit: u32,
+) -> Result<Vec<TelemetrySample>> {
+    let limit = per_signal_limit.clamp(12, 1000);
+    let mut statement = database.prepare(
+        "SELECT machine_id, metric, value, unit, observed_at
+         FROM (
+             SELECT machine_id, metric, value, unit, observed_at, id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY machine_id, metric
+                        ORDER BY observed_at DESC, id DESC
+                    ) AS sample_rank
+             FROM telemetry_samples
+         )
+         WHERE sample_rank <= ?1
+         ORDER BY machine_id ASC, metric ASC, observed_at ASC, id ASC"
+    )?;
+    let rows = statement.query_map([limit], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    })?;
+    let mut samples = Vec::new();
+    for row in rows {
+        let (machine_id, metric, value, unit, observed_at) = row?;
+        samples.push(TelemetrySample {
+            machine_id: Uuid::parse_str(&machine_id)
+                .context("invalid machine UUID in telemetry history")?,
+            metric,
+            value,
+            unit,
+            observed_at: DateTime::parse_from_rfc3339(&observed_at)
+                .context("invalid telemetry timestamp in local database")?
+                .with_timezone(&Utc),
+        });
+    }
+    Ok(samples)
+}
+
 pub fn record_anomaly(database: &Connection, anomaly: &AnomalySignal) -> Result<()> {
     let severity = match &anomaly.severity {
         Severity::Info => "info",
@@ -476,6 +521,33 @@ mod tests {
         assert_eq!(records[0].value, 42.5);
         assert_eq!(records[0].source, "manual");
         assert_eq!(records[1].value, 38.5);
+    }
+
+    #[test]
+    fn recent_telemetry_for_analytics_is_chronological_per_signal() {
+        let database = test_database();
+        let machine = test_machine();
+        insert_machine(&database, &machine).unwrap();
+        for (value, timestamp) in [
+            (40.0, "2026-11-18T10:00:00Z"),
+            (42.0, "2026-11-18T10:05:00Z"),
+            (43.0, "2026-11-18T10:10:00Z"),
+        ] {
+            record_telemetry(
+                &database,
+                &machine.id.to_string(),
+                "temperature",
+                value,
+                "°C",
+                "sensor",
+                Some(timestamp),
+            ).unwrap();
+        }
+        let samples = recent_telemetry_for_analytics(&database, 12).unwrap();
+        assert_eq!(samples.len(), 3);
+        assert_eq!(samples[0].value, 40.0);
+        assert_eq!(samples[1].value, 42.0);
+        assert_eq!(samples[2].value, 43.0);
     }
 
     #[test]
