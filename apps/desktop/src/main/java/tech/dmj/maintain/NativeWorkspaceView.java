@@ -51,6 +51,8 @@ public final class NativeWorkspaceView extends BorderPane {
     private final TableView<EngineIpcClient.MachineDto> table = new TableView<>();
     private final ComboBox<EngineIpcClient.MachineDto> telemetryMachine = new ComboBox<>();
     private final TableView<EngineIpcClient.TelemetryDto> telemetryTable = new TableView<>();
+    private final TableView<EngineIpcClient.AnomalyDto> anomalyTable = new TableView<>();
+    private final Label anomalyStatus = new Label("No anomaly events loaded.");
     private final TextField telemetryFilter = new TextField();
     private final CategoryAxis telemetryTimeAxis = new CategoryAxis();
     private final NumberAxis telemetryValueAxis = new NumberAxis();
@@ -182,7 +184,9 @@ public final class NativeWorkspaceView extends BorderPane {
         machinesTab.setClosable(false);
         Tab telemetryTab = new Tab("Telemetry", buildTelemetryPanel());
         telemetryTab.setClosable(false);
-        workspaceTabs.getTabs().addAll(machinesTab, telemetryTab);
+        Tab anomaliesTab = new Tab("Anomalies", buildAnomalyPanel());
+        anomaliesTab.setClosable(false);
+        workspaceTabs.getTabs().addAll(machinesTab, telemetryTab, anomaliesTab);
         workspaceTabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         workspaceTabs.setStyle("-fx-background-color:" + PANEL + ";");
         content.getChildren().addAll(heading, metrics, workspaceTabs);
@@ -215,7 +219,10 @@ public final class NativeWorkspaceView extends BorderPane {
             }
             @Override public EngineIpcClient.MachineDto fromString(String value) { return null; }
         });
-        telemetryMachine.setOnAction(event -> refreshTelemetry());
+        telemetryMachine.setOnAction(event -> {
+            refreshTelemetry();
+            refreshAnomalies();
+        });
 
         telemetryFilter.setPromptText("Filter signal (e.g. temperature)");
         telemetryFilter.setPrefWidth(245);
@@ -268,6 +275,82 @@ public final class NativeWorkspaceView extends BorderPane {
         panel.getChildren().addAll(heading, filterRow, entryRow, telemetryChart, telemetryTable, telemetryStatus);
         VBox.setVgrow(telemetryTable, Priority.ALWAYS);
         return panel;
+    }
+
+    private Node buildAnomalyPanel() {
+        VBox panel = new VBox(14);
+        panel.setPadding(new Insets(20));
+        panel.setStyle("-fx-background-color:" + PANEL + ";-fx-background-radius:14;"
+                + "-fx-border-color:#293444;-fx-border-radius:14;");
+
+        HBox heading = new HBox(12);
+        heading.setAlignment(Pos.CENTER_LEFT);
+        VBox titleBox = new VBox(5);
+        Label title = new Label("Detected anomalies");
+        title.setStyle("-fx-text-fill:" + TEXT + ";-fx-font-size:17px;-fx-font-weight:bold;");
+        Label hint = new Label("Rust's adaptive detector learns a baseline per machine and signal.");
+        hint.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
+        titleBox.getChildren().addAll(title, hint);
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        Button refresh = new Button("Refresh");
+        refresh.setStyle(buttonStyle(false));
+        refresh.setOnAction(event -> refreshAnomalies());
+        heading.getChildren().addAll(titleBox, spacer, refresh);
+
+        anomalyTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
+        anomalyTable.setStyle("-fx-background-color:#111923;-fx-control-inner-background:#111923;"
+                + "-fx-table-cell-border-color:#263241;-fx-text-background-color:" + TEXT
+                + ";-fx-selection-bar:#1a4846;-fx-selection-bar-non-focused:#263b43;");
+        anomalyTable.getColumns().setAll(
+                anomalyColumn("DETECTED AT", 1.3, anomaly -> anomaly.observedAt()),
+                anomalyColumn("SIGNAL", 0.8, anomaly -> anomaly.metric()),
+                anomalyColumn("SEVERITY", 0.7, anomaly -> anomaly.severity().toUpperCase(java.util.Locale.ROOT)),
+                anomalyColumn("SCORE", 0.5, anomaly -> String.format(java.util.Locale.ROOT, "%.2f", anomaly.score())),
+                anomalyColumn("EXPLANATION", 2.2, anomaly -> anomaly.explanation())
+        );
+        anomalyTable.setPlaceholder(new Label("No anomaly events for this machine."));
+        anomalyTable.setPrefHeight(480);
+        anomalyStatus.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
+        panel.getChildren().addAll(heading, anomalyTable, anomalyStatus);
+        VBox.setVgrow(anomalyTable, Priority.ALWAYS);
+        return panel;
+    }
+
+    private TableColumn<EngineIpcClient.AnomalyDto, String> anomalyColumn(
+            String title,
+            double widthWeight,
+            Function<EngineIpcClient.AnomalyDto, String> value
+    ) {
+        TableColumn<EngineIpcClient.AnomalyDto, String> column = new TableColumn<>(title);
+        column.setMinWidth(90 * widthWeight);
+        column.setCellValueFactory(cell ->
+                new ReadOnlyStringWrapper(safe(value.apply(cell.getValue()))));
+        column.setStyle("-fx-text-fill:#aebac9;-fx-font-size:10px;");
+        return column;
+    }
+
+    private void refreshAnomalies() {
+        EngineIpcClient.MachineDto selected = telemetryMachine.getValue();
+        if (selected == null) {
+            anomalyTable.getItems().clear();
+            anomalyStatus.setText("Select a machine to view anomaly events.");
+            return;
+        }
+        anomalyStatus.setText("Loading anomaly events from the Rust engine…");
+        Thread.ofVirtual().start(() -> {
+            try {
+                var anomalies = engine.listAnomalies(selected.id(), 100);
+                Platform.runLater(() -> {
+                    anomalyTable.getItems().setAll(anomalies);
+                    anomalyStatus.setText(anomalies.size() + " persisted anomaly event(s) for "
+                            + selected.name() + ".");
+                });
+            } catch (IOException error) {
+                Platform.runLater(() -> anomalyStatus.setText(
+                        "Anomaly history failed: " + safe(error.getMessage())));
+            }
+        });
     }
 
     private TableColumn<EngineIpcClient.TelemetryDto, String> telemetryColumn(
@@ -365,15 +448,30 @@ public final class NativeWorkspaceView extends BorderPane {
         telemetryStatus.setText("Writing telemetry to the Rust engine…");
         Thread.ofVirtual().start(() -> {
             try {
-                engine.recordTelemetry(selected.id(), metric, value, unit, "manual", null);
+                EngineIpcClient.TelemetryResult saved =
+                        engine.recordTelemetry(selected.id(), metric, value, unit, "manual", null);
                 String filter = telemetryFilter.getText() == null ? "" : telemetryFilter.getText().trim();
                 var records = engine.listTelemetry(selected.id(), filter.isBlank() ? null : filter, 100);
+                var anomalies = engine.listAnomalies(selected.id(), 100);
                 Platform.runLater(() -> {
                     telemetryTable.getItems().setAll(records);
                     updateTelemetryChart(records, filter);
+                    anomalyTable.getItems().setAll(anomalies);
                     telemetryValue.clear();
-                    telemetryStatus.setText("Reading saved in native SQLite · " + metric + " = "
-                            + value + (unit.isBlank() ? "" : " " + unit));
+                    if (saved.anomaly() != null) {
+                        EngineIpcClient.AnomalyDto event = saved.anomaly();
+                        telemetryStatus.setText("Anomaly detected · " + event.severity()
+                                + " · score " + String.format(java.util.Locale.ROOT, "%.2f", event.score())
+                                + " · " + event.explanation());
+                        anomalyStatus.setText(anomalies.size() + " persisted anomaly event(s) · latest: "
+                                + event.metric() + " / " + event.severity());
+                    } else {
+                        telemetryStatus.setText("Reading saved in native SQLite · " + metric + " = "
+                                + value + (unit.isBlank() ? "" : " " + unit)
+                                + " · baseline learning continues until enough samples are collected.");
+                        anomalyStatus.setText(anomalies.size() + " persisted anomaly event(s) for "
+                                + selected.name() + ".");
+                    }
                 });
             } catch (IOException error) {
                 Platform.runLater(() ->
@@ -465,6 +563,7 @@ public final class NativeWorkspaceView extends BorderPane {
                     updateMetrics();
                     status.setText("Connected · " + result.size() + " native machine record(s)");
                     refreshTelemetry();
+                    refreshAnomalies();
                 });
             } catch (IOException error) {
                 Platform.runLater(() -> status.setText("Registry read failed: " + safe(error.getMessage())));
