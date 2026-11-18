@@ -1,9 +1,13 @@
 use anyhow::{Context, Result};
-use maintain_app_core::Machine;
+use maintain_app_core::{Machine, TelemetrySample};
+use maintain_analytics::LocalAnalytics;
 use maintain_protocol::{EngineRequest, EngineResponse, IpcEnvelope, PROTOCOL_VERSION};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tracing::{error, info};
+
+static LOCAL_ANALYTICS: OnceLock<Mutex<LocalAnalytics>> = OnceLock::new();
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -145,7 +149,31 @@ fn handle_request(request: EngineRequest, database: &Path) -> EngineResponse {
                 )
             });
             match result {
-                Ok(record) => EngineResponse::TelemetryRecorded { record },
+                Ok(record) => {
+                    // The detector is process-local but keyed by machine and metric.
+                    // Telemetry remains durably stored even if anomaly-event persistence fails.
+                    let sample = TelemetrySample {
+                        machine_id: record.machine_id,
+                        metric: record.metric.clone(),
+                        value: record.value,
+                        unit: record.unit.clone(),
+                        observed_at: record.observed_at.clone(),
+                    };
+                    let anomaly = {
+                        let state = LOCAL_ANALYTICS
+                            .get_or_init(|| Mutex::new(LocalAnalytics::default()));
+                        let mut analytics = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                        analytics.inspect(&sample)
+                    };
+                    if let Some(ref signal) = anomaly {
+                        if let Err(error) = maintain_persistence::open_database(database)
+                            .and_then(|connection| maintain_persistence::record_anomaly(&connection, signal))
+                        {
+                            error!(error = %error, "telemetry persisted but anomaly event could not be stored");
+                        }
+                    }
+                    EngineResponse::TelemetryRecorded { record, anomaly }
+                }
                 Err(error) => EngineResponse::Error {
                     code: "telemetry_record_failed".into(),
                     message: error.to_string(),
@@ -178,6 +206,18 @@ fn handle_request(request: EngineRequest, database: &Path) -> EngineResponse {
                 Ok(records) => EngineResponse::TelemetryListed { records },
                 Err(error) => EngineResponse::Error {
                     code: "telemetry_list_failed".into(),
+                    message: error.to_string(),
+                },
+            }
+        }
+        EngineRequest::ListAnomalies { machine_id, limit } => {
+            let result = maintain_persistence::open_database(database).and_then(|connection| {
+                maintain_persistence::list_anomalies(&connection, &machine_id, limit)
+            });
+            match result {
+                Ok(anomalies) => EngineResponse::AnomaliesListed { anomalies },
+                Err(error) => EngineResponse::Error {
+                    code: "anomaly_list_failed".into(),
                     message: error.to_string(),
                 },
             }
