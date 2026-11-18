@@ -432,7 +432,7 @@ mod tests {
             [],
             |row| row.get(0),
         ).unwrap();
-        assert_eq!(versions, 2);
+        assert_eq!(versions, 3);
     }
 
     #[test]
