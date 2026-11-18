@@ -35,6 +35,10 @@ public final class EngineIpcClient {
     public record TelemetryDto(
             long id, String machineId, String metric, double value,
             String unit, String source, String observedAt) {}
+    public record AnomalyDto(
+            String machineId, String metric, double score, String severity,
+            String explanation, String observedAt) {}
+    public record TelemetryResult(TelemetryDto record, AnomalyDto anomaly) {}
 
     public EngineStatus pingWithRetry(Duration timeout) throws IOException, InterruptedException {
         long deadline = System.nanoTime() + timeout.toNanos();
@@ -79,7 +83,7 @@ public final class EngineIpcClient {
     }
 
 
-    public TelemetryDto recordTelemetry(
+    public TelemetryResult recordTelemetry(
             String machineId,
             String metric,
             double value,
@@ -98,7 +102,35 @@ public final class EngineIpcClient {
         }
         JsonNode response = send("record_telemetry", payload);
         requireKind(response, "telemetry_recorded");
-        return readTelemetry(response.path("message").path("payload").path("record"));
+        JsonNode payloadNode = response.path("message").path("payload");
+        JsonNode anomalyNode = payloadNode.path("anomaly");
+        AnomalyDto anomaly = anomalyNode.isMissingNode() || anomalyNode.isNull()
+                ? null : readAnomaly(anomalyNode);
+        return new TelemetryResult(readTelemetry(payloadNode.path("record")), anomaly);
+    }
+
+    public List<AnomalyDto> listAnomalies(String machineId, int limit) throws IOException {
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("machine_id", machineId);
+        payload.put("limit", Math.max(1, Math.min(limit, 200)));
+        JsonNode response = send("list_anomalies", payload);
+        requireKind(response, "anomalies_listed");
+        List<AnomalyDto> anomalies = new ArrayList<>();
+        for (JsonNode node : response.path("message").path("payload").path("anomalies")) {
+            anomalies.add(readAnomaly(node));
+        }
+        return anomalies;
+    }
+
+    private static AnomalyDto readAnomaly(JsonNode node) {
+        return new AnomalyDto(
+                node.path("machine_id").asText(),
+                node.path("metric").asText(),
+                node.path("score").asDouble(),
+                node.path("severity").asText("Info"),
+                node.path("explanation").asText(),
+                node.path("observed_at").asText()
+        );
     }
 
     public List<TelemetryDto> listTelemetry(String machineId, String metric, int limit)
