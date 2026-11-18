@@ -23,8 +23,13 @@ This roadmap describes the native JavaFX/Rust product. React/FastAPI compatibili
 - [ ] Data import from the separate compatibility database
 
 ## Slice 2 — Telemetry and device integrations
-- [ ] Add telemetry write/list commands to the IPC contract and Rust repository
-- [ ] Add JavaFX telemetry history and live status views
+- [x] Add telemetry write/list commands to the IPC contract and Rust repository
+- [x] Add JavaFX manual telemetry entry, signal filtering, history table and trend chart
+- [x] Persist telemetry source and append audit events
+- [x] Run the Rust adaptive detector on new readings and persist anomaly events
+- [x] Restore detector warm-up state from recent persisted telemetry at engine startup
+- [x] Expose anomaly history in a native JavaFX view
+- [ ] Add live status refresh/polling and signal configuration
 - [ ] Implement serial/USB device adapters
 - [ ] Implement MQTT and Modbus TCP adapters
 - [ ] Add validated threshold rules, alert acknowledgement and retention
