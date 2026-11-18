@@ -15,6 +15,10 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.XYChart;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
@@ -47,6 +51,11 @@ public final class NativeWorkspaceView extends BorderPane {
     private final TableView<EngineIpcClient.MachineDto> table = new TableView<>();
     private final ComboBox<EngineIpcClient.MachineDto> telemetryMachine = new ComboBox<>();
     private final TableView<EngineIpcClient.TelemetryDto> telemetryTable = new TableView<>();
+    private final TextField telemetryFilter = new TextField();
+    private final CategoryAxis telemetryTimeAxis = new CategoryAxis();
+    private final NumberAxis telemetryValueAxis = new NumberAxis();
+    private final LineChart<String, Number> telemetryChart =
+            new LineChart<>(telemetryTimeAxis, telemetryValueAxis);
     private final TextField telemetryMetric = new TextField();
     private final TextField telemetryValue = new TextField();
     private final TextField telemetryUnit = new TextField();
@@ -183,22 +192,22 @@ public final class NativeWorkspaceView extends BorderPane {
 
 
     private Node buildTelemetryPanel() {
-        VBox panel = new VBox(16);
+        VBox panel = new VBox(14);
         panel.setPadding(new Insets(20));
         panel.setStyle("-fx-background-color:" + PANEL + ";-fx-background-radius:14;"
                 + "-fx-border-color:#293444;-fx-border-radius:14;");
 
         VBox heading = new VBox(5);
-        Label title = new Label("Telemetry history");
+        Label title = new Label("Telemetry");
         title.setStyle("-fx-text-fill:" + TEXT + ";-fx-font-size:17px;-fx-font-weight:bold;");
-        Label hint = new Label("Readings are stored locally by the Rust engine. Hardware ingestion will use the same write path.");
+        Label hint = new Label("Record readings into native SQLite and review the history through the Rust engine.");
         hint.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
         heading.getChildren().addAll(title, hint);
 
-        HBox controls = new HBox(10);
-        controls.setAlignment(Pos.CENTER_LEFT);
+        HBox filterRow = new HBox(10);
+        filterRow.setAlignment(Pos.CENTER_LEFT);
         telemetryMachine.setPromptText("Select machine");
-        telemetryMachine.setPrefWidth(230);
+        telemetryMachine.setPrefWidth(260);
         telemetryMachine.setStyle("-fx-background-color:#101720;-fx-text-fill:" + TEXT + ";");
         telemetryMachine.setConverter(new javafx.util.StringConverter<>() {
             @Override public String toString(EngineIpcClient.MachineDto machine) {
@@ -208,24 +217,38 @@ public final class NativeWorkspaceView extends BorderPane {
         });
         telemetryMachine.setOnAction(event -> refreshTelemetry());
 
-        telemetryMetric.setPromptText("Signal (e.g. temperature)");
-        telemetryMetric.setPrefWidth(210);
-        telemetryValue.setPromptText("Value");
-        telemetryValue.setPrefWidth(100);
-        telemetryUnit.setPromptText("Unit (°C)");
-        telemetryUnit.setPrefWidth(95);
-
-        Button recordButton = new Button("+  Record reading");
-        recordButton.setStyle(buttonStyle(true));
-        recordButton.setOnAction(event -> recordTelemetry());
-
+        telemetryFilter.setPromptText("Filter signal (e.g. temperature)");
+        telemetryFilter.setPrefWidth(245);
+        Button applyFilter = new Button("Apply filter");
+        applyFilter.setStyle(buttonStyle(false));
+        applyFilter.setOnAction(event -> refreshTelemetry());
         Button reload = new Button("Refresh");
         reload.setStyle(buttonStyle(false));
         reload.setOnAction(event -> refreshTelemetry());
+        filterRow.getChildren().addAll(telemetryMachine, telemetryFilter, applyFilter, reload);
 
-        controls.getChildren().addAll(
-                telemetryMachine, telemetryMetric, telemetryValue, telemetryUnit, recordButton, reload
-        );
+        HBox entryRow = new HBox(10);
+        entryRow.setAlignment(Pos.CENTER_LEFT);
+        telemetryMetric.setPromptText("Signal name");
+        telemetryMetric.setPrefWidth(220);
+        telemetryValue.setPromptText("Numeric value");
+        telemetryValue.setPrefWidth(130);
+        telemetryUnit.setPromptText("Unit (°C)");
+        telemetryUnit.setPrefWidth(105);
+        Button recordButton = new Button("+  Record reading");
+        recordButton.setStyle(buttonStyle(true));
+        recordButton.setOnAction(event -> recordTelemetry());
+        entryRow.getChildren().addAll(telemetryMetric, telemetryValue, telemetryUnit, recordButton);
+
+        telemetryTimeAxis.setLabel("Recorded time");
+        telemetryValueAxis.setLabel("Measured value");
+        telemetryChart.setTitle("Signal trend");
+        telemetryChart.setAnimated(false);
+        telemetryChart.setLegendVisible(false);
+        telemetryChart.setCreateSymbols(true);
+        telemetryChart.setMinHeight(210);
+        telemetryChart.setPrefHeight(245);
+        telemetryChart.setStyle("-fx-background-color:transparent;-fx-text-fill:" + MUTED + ";");
 
         telemetryTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
         telemetryTable.setStyle("-fx-background-color:#111923;-fx-control-inner-background:#111923;"
@@ -238,11 +261,11 @@ public final class NativeWorkspaceView extends BorderPane {
                 telemetryColumn("UNIT", 0.55, sample -> sample.unit()),
                 telemetryColumn("SOURCE", 0.7, sample -> sample.source())
         );
-        telemetryTable.setPlaceholder(new Label("No readings for this machine yet."));
-        telemetryTable.setPrefHeight(430);
+        telemetryTable.setPlaceholder(new Label("No readings match the selected machine and signal."));
+        telemetryTable.setPrefHeight(310);
 
         telemetryStatus.setStyle("-fx-text-fill:" + MUTED + ";-fx-font-size:11px;");
-        panel.getChildren().addAll(heading, controls, telemetryTable, telemetryStatus);
+        panel.getChildren().addAll(heading, filterRow, entryRow, telemetryChart, telemetryTable, telemetryStatus);
         VBox.setVgrow(telemetryTable, Priority.ALWAYS);
         return panel;
     }
@@ -270,17 +293,50 @@ public final class NativeWorkspaceView extends BorderPane {
         telemetryStatus.setText("Loading local telemetry history…");
         Thread.ofVirtual().start(() -> {
             try {
-                var records = engine.listTelemetry(selected.id(), null, 100);
+                String filter = telemetryFilter.getText() == null ? "" : telemetryFilter.getText().trim();
+                var records = engine.listTelemetry(selected.id(), filter.isBlank() ? null : filter, 100);
                 Platform.runLater(() -> {
                     telemetryTable.getItems().setAll(records);
+                    updateTelemetryChart(records, filter);
                     telemetryStatus.setText("Showing " + records.size()
-                            + " newest reading(s) for " + selected.name() + ".");
+                            + " newest reading(s) for " + selected.name()
+                            + (filter.isBlank() ? "." : " · signal: " + filter));
                 });
             } catch (IOException error) {
                 Platform.runLater(() ->
                         telemetryStatus.setText("Telemetry history failed: " + safe(error.getMessage())));
             }
         });
+    }
+
+    private void updateTelemetryChart(
+            java.util.List<EngineIpcClient.TelemetryDto> records,
+            String filter
+    ) {
+        telemetryChart.getData().clear();
+        if (filter == null || filter.isBlank()) {
+            telemetryChart.setTitle("Enter a signal filter to plot its trend");
+            return;
+        }
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        series.setName(filter);
+        java.util.List<EngineIpcClient.TelemetryDto> chronological = new java.util.ArrayList<>(records);
+        java.util.Collections.reverse(chronological);
+        int start = Math.max(0, chronological.size() - 40);
+        for (int i = start; i < chronological.size(); i++) {
+            EngineIpcClient.TelemetryDto sample = chronological.get(i);
+            String timeLabel;
+            try {
+                timeLabel = java.time.OffsetDateTime.parse(sample.observedAt())
+                        .toLocalDateTime()
+                        .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"));
+            } catch (java.time.format.DateTimeParseException error) {
+                timeLabel = sample.observedAt();
+            }
+            series.getData().add(new XYChart.Data<>(timeLabel, sample.value()));
+        }
+        telemetryChart.setTitle("Trend · " + filter);
+        if (!series.getData().isEmpty()) telemetryChart.getData().add(series);
     }
 
     private void recordTelemetry() {
@@ -310,9 +366,11 @@ public final class NativeWorkspaceView extends BorderPane {
         Thread.ofVirtual().start(() -> {
             try {
                 engine.recordTelemetry(selected.id(), metric, value, unit, "manual", null);
-                var records = engine.listTelemetry(selected.id(), null, 100);
+                String filter = telemetryFilter.getText() == null ? "" : telemetryFilter.getText().trim();
+                var records = engine.listTelemetry(selected.id(), filter.isBlank() ? null : filter, 100);
                 Platform.runLater(() -> {
                     telemetryTable.getItems().setAll(records);
+                    updateTelemetryChart(records, filter);
                     telemetryValue.clear();
                     telemetryStatus.setText("Reading saved in native SQLite · " + metric + " = "
                             + value + (unit.isBlank() ? "" : " " + unit));
